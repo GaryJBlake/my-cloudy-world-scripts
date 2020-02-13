@@ -5,8 +5,8 @@
     .Created By:    Gary Blake
     .Group:         HCI BU
     .Organization:  VMware, Inc.
-    .Version:       1.0 (Build 001)
-    .Date:          2020-02-11
+    .Version:       1.0 (Build 002)
+    .Date:          2020-02-13
     ===============================================================================================================
     .CREDITS
 
@@ -16,6 +16,7 @@
     .CHANGE_LOG
 
     - 1.0.001 (Gary Blake / 2020-02-11) - Initial script creation
+    - 1.0.002 (Gary Blake / 2020-02-13) - Added support for Platform Services Controllers in VCF 3.x
 
     ===============================================================================================================
     .DESCRIPTION
@@ -74,7 +75,7 @@ Function gatherSddcInventory {
     LogMessage "Gathering Inventory for NSX-V Manager"
     $Global:nsxvManager = Get-VCFnsxvManager
     LogMessage "Gathering Inventory for Platform Services Controllers"
-    $Global:psc = Get-VCFPSC
+    $Global:pscs = Get-VCFPSC
   }
   if ($Global:sddcMgrVersion -eq "4") {
     LogMessage "Gathering Inventory for NSX-T Management Cluster"
@@ -85,80 +86,77 @@ Function gatherSddcInventory {
 
 Function generateCsrSpec {
 
-  if ($Global:sddcMgrVersion -eq "3") {
-    LogMessage "Populating requestCsrSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
-  	$generateCsrSpecbody =
-  	'{
-  		"csrGenerationSpec": {
-  			"country": "US",
-  			"email": "",
-  			"keyAlgorithm": "RSA",
-  			"keySize": "2048",
-  			"locality": "San Francisco",
-  			"organization": "VMware",
-  			"organizationUnit": "Rainpole",
-  			"state": "CA"
-  		},
-  		"resources": [
-  			{
-  				"fqdn": "'+$Global:sddcMgr.fqdn+'",
-  				"name": "'+$Global:sddcMgr.fqdn.split(".")[0]+'",
-  				"resourceId": "'+$Global:sddcMgr.id+'",
-  				"type": "SDDC_MANAGER"
-  			},{
-  				"fqdn": "'+$Global:nsxvManager.fqdn+'",
-  				"name": "'+$Global:nsxvManager.fqdn.split(".")[0]+'",
-  				"resourceId": "'+$Global:nsxvManager.id+'",
-  				"type": "NSXV_MANAGER"
-  			},{
-  				"fqdn": "'+$Global:vCenterServer.fqdn+'",
-  				"name": "'+$Global:vCenterServer.fqdn.split(".")[0]+'",
-  				"resourceId": "'+$Global:vCenterServer.id+'",
-  				"type": "VCENTER"
-  			}
-  		]
-  	}' | Out-File -FilePath $Global:path"requestCsrSpec.json"
-  }
-  if ($Global:sddcMgrVersion -eq "4") {
-    LogMessage "Populating requestCsrSpec.json with SDDC Manager, vCenter Server and NSX-T Management Cluster"
-    $generateCsrSpecbody =
+  LogMessage "Populating requestCsrSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
+
+  $resourcesObject = @()
+    $resourcesObject += [pscustomobject]@{
+      'fqdn' = $Global:sddcMgr.fqdn
+      'name' = $Global:sddcMgr.fqdn.split(".")[0]
+      'resourceId' = $Global:sddcMgr.id
+      'type' = "SDDC_MANAGER"
+    }
+    $resourcesObject += [pscustomobject]@{
+      'fqdn' = $Global:vCenterServer.fqdn
+      'name' = $Global:vCenterServer.fqdn.split(".")[0]
+      'resourceId' = $Global:vCenterServer.id
+      'type' = "VCENTER"
+    }
+    if ($Global:sddcMgrVersion -eq "3") {
+      $resourcesObject += [pscustomobject]@{
+        'fqdn' = $Global:nsxvManager.fqdn
+        'name' = $Global:nsxvManager.fqdn.split(".")[0]
+        'resourceId' = $Global:nsxvManager.id
+        'type' = "NSX_MANAGER"
+      }
+      foreach ($psc in $Global:pscs) {
+        $resourcesObject += [pscustomobject]@{
+          'fqdn' = $psc.fqdn
+          'name' = $psc.fqdn.split(".")[0]
+          'resourceId' = $psc.id
+          'type' = "PSC"
+        }
+      }
+    }
+    if ($Global:sddcMgrVersion -eq "4") {
+      $resourcesObject += [pscustomobject]@{
+        'fqdn' = $Global:nsxtManager.fqdn
+        'name' = $Global:nsxtManager.fqdn.split(".")[0]
+        'resourceId' = $Global:nsxtManager.id
+        'type' = "NSXT_MANAGER"
+      }
+    }
+
+    $csrGenerationSpecJson =
     '{
       "csrGenerationSpec": {
         "country": "US",
         "email": "",
-        "keyAlgorithm": "RSA",
-        "keySize": "2048",
-        "locality": "San Francisco",
-        "organization": "VMware",
-        "organizationUnit": "Rainpole",
-        "state": "CA"
-      },
-      "resources": [
-        {
-          "fqdn": "'+$Global:sddcMgr.fqdn+'",
-          "name": "'+$Global:sddcMgr.fqdn.split(".")[0]+'",
-          "resourceId": "'+$Global:sddcMgr.id+'",
-          "type": "SDDC_MANAGER"
-        },{
-          "fqdn": "'+$Global:nsxtManager.fqdn+'",
-          "name": "'+$Global:nsxtManager.fqdn.split(".")[0]+'",
-          "resourceId": "'+$Global:nsxtManager.id+'",
-          "type": "NSXT_MANAGER"
-        },{
-          "fqdn": "'+$Global:vCenterServer.fqdn+'",
-          "name": "'+$Global:vCenterServer.fqdn.split(".")[0]+'",
-          "resourceId": "'+$Global:vCenterServer.id+'",
-          "type": "VCENTER"
-        }
-      ]
-    }' | Out-File -FilePath $Global:path"requestCsrSpec.json"
+    		"keyAlgorithm": "RSA",
+    		"keySize": "2048",
+    		"locality": "San Francisco",
+    		"organization": "VMware",
+    		"organizationUnit": "Rainpole",
+    		"state": "CA"
+    	},
+    '
+
+  $resourcesBodyObject += [pscustomobject]@{
+      resources = $resourcesObject
   }
+
+  $resourcesBodyObject | ConvertTo-Json | Out-File -FilePath $Global:path"temp.json"
+  Get-Content $Global:path"temp.json" | Select-Object -Skip 1 | Set-Content $Global:path"temp1.json"
+  $resouresJson = Get-Content $Global:path"temp1.json" -Raw
+  Remove-Item -Path $Global:path"temp.json"
+  Remove-Item -Path $Global:path"temp1.json"
+  $requestCsrSpecJson = $csrGenerationSpecJson + $resouresJson
+  $requestCsrSpecJson | Out-File $Global:path"requestCsrSpec.json"
 }
 
 Function generateCertificateSpec {
 
   if ($Global:sddcMgrVersion -eq "3") {
-    LogMessage "Populating requestCsrSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
+    LogMessage "Populating requestCertificateSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
   	$generateCertificateSpecbody =
   	'{
   		"caType": "Microsoft",
@@ -213,7 +211,7 @@ Function generateCertificateSpec {
 Function generateUpdateCertificateSpec {
 
 if ($Global:sddcMgrVersion -eq "3") {
-    LogMessage "Populating requestCsrSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
+    LogMessage "Populating updateCertificateSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
   	$generateUpdateCertificateSpecbody =
   	'{
   		"operationType": "INSTALL",
