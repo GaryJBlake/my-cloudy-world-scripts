@@ -11,7 +11,7 @@
     .CREDITS
 
     - Willian Lam - Set-VMKeystrokes Function
-    - Ken Gould - LogMessage Function
+    - William Lam & Ken Gould - LogMessage Function
 
     ===============================================================================================================
     .CHANGE_LOG
@@ -23,7 +23,7 @@
 
     ===============================================================================================================
     .DESCRIPTION
-        This script automates the following procedures to help with preparing nested ESXi hosts for use 
+        This script automates the following procedures to help with preparing nested ESXi hosts for use
         with VMware Cloud Foundation:
         - Creation of the nested ESXi Host
         - Automated interactive installation of ESXi
@@ -33,17 +33,6 @@
     .EXAMPLE
     .\createNestedEsxuHost.ps1 -hostname sfo01m01esx01 -IpAddress 192.168.110.51 -type WLD
 #>
-
-# Author: Gary Blake
-# Website: my-cloudy-world.com
-# Description: PowerShell script to deploy a fully functional nested vSphere 6.7 ESXi host ready for use with VMware Cloud 
-#              Foundation.
-#
-# Credits: Thanks to William Lam for the Set-VMKeystrokes function
-#
-# Changelog
-# 11/22/16
-#   * Automatically handle Nested ESXi on vSAN
 
     param(
     [Parameter(Mandatory=$true)]
@@ -104,10 +93,10 @@ Function LogMessage {
 
     Write-Host -NoNewline -ForegroundColor White " [$timestamp]"
     If ($skipnewline) {
-        Write-Host -NoNewline -ForegroundColor $colour " $message"        
+        Write-Host -NoNewline -ForegroundColor $colour " $message"
     }
     else {
-        Write-Host -ForegroundColor $colour " $message" 
+        Write-Host -ForegroundColor $colour " $message"
     }
 
 }
@@ -297,14 +286,14 @@ Function Set-VMKeystrokes {
             Write-Host "[StringInput] The following character `"$character`" has not been mapped, you will need to manually process this character"
             break
         }
-       
+
     }
     }
 
     #Code for -SpecialKeyInput
      if($SpecialKeyInput)
      {
-       if($hidCharacterMap.ContainsKey([string]$SpecialKeyInput)) 
+       if($hidCharacterMap.ContainsKey([string]$SpecialKeyInput))
         {
         $hidCode = $hidCharacterMap[[string]$SpecialKeyInput]
         $tmp = New-Object VMware.Vim.UsbScanCodeSpecKeyEvent
@@ -322,7 +311,7 @@ Function Set-VMKeystrokes {
             break
         }
     }
-    
+
     # Add return carriage to the end of the string input (useful for logins or executing commands)
     if($ReturnCarriage) {
         # Convert return carriage to HID code format
@@ -362,10 +351,10 @@ Function createNestedEsxiVm {
                 $powerState = Get-VM -Name $esxiHostname
                 if ($powerState.PowerState -eq 'PoweredOn') {
                     LogMessage "Powering off nested ESXi virtual machine $esxiHostname"
-                    Stop-VM -VM $esxiHostname -Confirm:$false | Out-Null 
+                    Stop-VM -VM $esxiHostname -Confirm:$false | Out-Null
                 }
                 LogMessage "Deleting nested ESXi virtual machine $esxiHostname"
-                Remove-VM -VM $esxiHostname -DeletePermanently -Confirm:$false 
+                Remove-VM -VM $esxiHostname -DeletePermanently -Confirm:$false
             }
             Catch {
                 $ErrorMessage = $_.Exception.Message
@@ -395,7 +384,7 @@ Function createNestedEsxiVm {
         else {
             Get-VM $esxiHostname | New-HardDisk -CapacityGB $nestedDiskDriveMgmt -StorageFormat Thin -Confirm:$false | Out-Null
         }
-                
+
         LogMessage "Configuring Network Adapters on Nested ESXi Virtual Machine $esxiHostname"
         Get-NetworkAdapter -VM $esxiHostname | Remove-NetworkAdapter -Confirm:$false | Out-Null
         New-NetworkAdapter -VM $esxiHostname -NetworkName "VM Network" -StartConnected -Type Vmxnet3 -Confirm:$false | Out-Null
@@ -549,7 +538,7 @@ Function installEsxi {
 
         Set-VMKeystrokes -VMName $VirtualMachine -StringInput "Y" -DebugOn $True | Out-Null #ESXi Setup - Apply Changes and reboot host
         LogMessage "ESXi Installation and Configuration Complete" Yellow
-        LogMessage "Waiting for ESXi 90 seconds" 
+        LogMessage "Waiting for ESXi 90 seconds"
         SLEEP 90
     }
     Catch {
@@ -560,7 +549,7 @@ Function installEsxi {
 }
 
 Function enableSsh {
-    
+
     Try {
         LogMessage "Enabling SSH and setting and auto-start policy on $esxiHostname"
         Get-VMHostService | Where {$_.key -eq 'TSM-SSH'} | Start-VMHostService -Confirm:$false | Out-Null
@@ -575,7 +564,7 @@ Function enableSsh {
 }
 
 Function configureHostNtp {
-    
+
     Try {
         LogMessage "Configuring NTP and setting an auto-start policy on $esxiHostname"
         $CurrentNTPServerList = Get-VMHostNtpServer -VMHost $esxiHostname
@@ -593,7 +582,7 @@ Function configureHostNtp {
         Set-VMHostService -HostService (Get-VMHostservice | Where {$_.key -eq "ntpd"}) -Policy "On" | Out-Null
         LogMessage "Restarting NTP Service"
         Get-VMHostService | Where {$_.key -eq 'ntpd'} | Stop-VMHostService -Confirm:$false | Out-Null
-        Get-VMHostService | Where {$_.key -eq 'ntpd'} | Start-VMHostService -Confirm:$false | Out-Null   
+        Get-VMHostService | Where {$_.key -eq 'ntpd'} | Start-VMHostService -Confirm:$false | Out-Null
         LogMessage "Successfully configured NTP settings on $esxiHostname"
     }
     Catch {
@@ -604,11 +593,11 @@ Function configureHostNtp {
 }
 
 Function disableCeip {
-   
+
     Try {
         LogMessage "Disabling the Customer Experience Improvement Program (CEIP) on $esxiHostname"
         Get-AdvancedSetting -Entity $esxiHostname -Name UserVars.HostClientCEIPOptIn | Set-AdvancedSetting -Value 2 -Confirm:$false | Out-Null
-        
+
     }
     Catch {
         $ErrorMessage = $_.Exception.Message
