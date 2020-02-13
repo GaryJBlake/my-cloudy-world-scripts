@@ -16,7 +16,10 @@
     .CHANGE_LOG
 
     - 1.0.001 (Gary Blake / 2020-02-11) - Initial script creation
-    - 1.0.002 (Gary Blake / 2020-02-13) - Added support for Platform Services Controllers in VCF 3.x
+    - 1.0.002 (Gary Blake / 2020-02-13) - Refactor Json Generation process to support dynamic population
+                                        - Refactor method for dynamic checking of VCF version
+                                        - Added support for Platform Services Controllers in VCF 3.x
+                                        - Added support for vRealize Log Insight in VCF 3.x
 
     ===============================================================================================================
     .DESCRIPTION
@@ -25,7 +28,6 @@
 
     .EXAMPLE
     .\generateCertificateJsons.ps1 -sddcMgrFqdn sfo01mgr01.sddc.local -sddcMgrUsername admin -sddcMgrPassword VMw@re1!
-    -vcfVersion 4
 #>
 
     param(
@@ -76,6 +78,8 @@ Function gatherSddcInventory {
     $Global:nsxvManager = Get-VCFnsxvManager
     LogMessage "Gathering Inventory for Platform Services Controllers"
     $Global:pscs = Get-VCFPSC
+    LogMessage "Gathering Inventory for vRealize Log Insight"
+    $Global:logInsight = Get-VCFvRLI
   }
   if ($Global:sddcMgrVersion -eq "4") {
     LogMessage "Gathering Inventory for NSX-T Management Cluster"
@@ -87,7 +91,7 @@ Function gatherSddcInventory {
 Function generateCsrSpec {
 
   if ($Global:sddcMgrVersion -eq "3") {
-    LogMessage "Populating requestCsrSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
+    LogMessage "Populating requestCsrSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers, NSX-V Manager and vRealize Log Insight"
   }
   else {
     LogMessage "Populating requestCsrSpec.json with SDDC Manager, vCenter Server and NSX-T Management Cluster"
@@ -112,6 +116,12 @@ Function generateCsrSpec {
         'name' = $Global:nsxvManager.fqdn.split(".")[0]
         'resourceId' = $Global:nsxvManager.id
         'type' = "NSX_MANAGER"
+      }
+      $resourcesObject += [pscustomobject]@{
+        'fqdn' = $Global:logInsight.loadBalancerFqdn
+        'name' = $Global:logInsight.loadBalancerFqdn.split(".")[0]
+        'resourceId' = $Global:logInsight.id
+        'type' = "VRLI"
       }
       foreach ($psc in $Global:pscs) {
         $resourcesObject += [pscustomobject]@{
@@ -161,7 +171,7 @@ Function generateCsrSpec {
 Function generateCertificateSpec {
 
   if ($Global:sddcMgrVersion -eq "3") {
-    LogMessage "Populating requestCertificateSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
+    LogMessage "Populating requestCertificateSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers, NSX-V Manager and vRealize Log Insight"
   }
   else {
     LogMessage "Populating requestCertificateSpec.json with SDDC Manager, vCenter Server and NSX-T Management Cluster"
@@ -186,6 +196,12 @@ Function generateCertificateSpec {
         'name' = $Global:nsxvManager.fqdn.split(".")[0]
         'resourceId' = $Global:nsxvManager.id
         'type' = "NSX_MANAGER"
+      }
+      $resourcesObject += [pscustomobject]@{
+        'fqdn' = $Global:logInsight.loadBalancerFqdn
+        'name' = $Global:logInsight.loadBalancerFqdn.split(".")[0]
+        'resourceId' = $Global:logInsight.id
+        'type' = "VRLI"
       }
       foreach ($psc in $Global:pscs) {
         $resourcesObject += [pscustomobject]@{
@@ -225,7 +241,7 @@ Function generateCertificateSpec {
 Function generateUpdateCertificateSpec {
 
   if ($Global:sddcMgrVersion -eq "3") {
-    LogMessage "Populating updateCertificateSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
+    LogMessage "Populating updateCertificateSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers, NSX-V Manager and vRealize Log Insight"
   }
   else {
     LogMessage "Populating updateCertificateSpecc.json with SDDC Manager, vCenter Server and NSX-T Management Cluster"
@@ -251,6 +267,12 @@ Function generateUpdateCertificateSpec {
         'name' = $Global:nsxvManager.fqdn.split(".")[0]
         'resourceId' = $Global:nsxvManager.id
         'type' = "NSX_MANAGER"
+      }
+      $resourcesObject += [pscustomobject]@{
+        'fqdn' = $Global:logInsight.loadBalancerFqdn
+        'name' = $Global:logInsight.loadBalancerFqdn.split(".")[0]
+        'resourceId' = $Global:logInsight.id
+        'type' = "VRLI"
       }
       foreach ($psc in $Global:pscs) {
         $resourcesObject += [pscustomobject]@{
