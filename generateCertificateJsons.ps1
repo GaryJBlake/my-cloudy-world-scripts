@@ -86,7 +86,12 @@ Function gatherSddcInventory {
 
 Function generateCsrSpec {
 
-  LogMessage "Populating requestCsrSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
+  if ($Global:sddcMgrVersion -eq "3") {
+    LogMessage "Populating requestCsrSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
+  }
+  else {
+    LogMessage "Populating requestCsrSpec.json with SDDC Manager, vCenter Server and NSX-T Management Cluster"
+  }
 
   $resourcesObject = @()
     $resourcesObject += [pscustomobject]@{
@@ -157,110 +162,129 @@ Function generateCertificateSpec {
 
   if ($Global:sddcMgrVersion -eq "3") {
     LogMessage "Populating requestCertificateSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
-  	$generateCertificateSpecbody =
-  	'{
-  		"caType": "Microsoft",
-  		"resources": [
-  			{
-  				"fqdn": "'+$Global:sddcMgr.fqdn+'",
-  				"name": "'+$Global:sddcMgr.fqdn.split(".")[0]+'",
-  				"resourceId": "'+$Global:sddcMgr.id+'",
-  				"type": "SDDC_MANAGER"
-  			},{
-  				"fqdn": "'+$Global:nsxvManager.fqdn+'",
-  				"name": "'+$Global:nsxvManager.fqdn.split(".")[0]+'",
-  				"resourceId": "'+$Global:nsxvManager.id+'",
-  				"type": "NSXV_MANAGER"
-  			},{
-  				"fqdn": "'+$Global:vCenterServer.fqdn+'",
-  				"name": "'+$Global:vCenterServer.fqdn.split(".")[0]+'",
-  				"resourceId": "'+$Global:vCenterServer.id+'",
-  				"type": "VCENTER"
-  			}
-  		]
-  	}' | Out-File -FilePath $Global:path"requestCertificateSpec.json"
+  }
+  else {
+    LogMessage "Populating requestCertificateSpec.json with SDDC Manager, vCenter Server and NSX-T Management Cluster"
   }
 
-  if ($Global:sddcMgrVersion -eq "4") {
-    LogMessage "Populating requestCertificateSpec.json with SDDC Manager, vCenter Server and NSX-T Management Cluster"
-  	$generateCertificateSpecbody =
-  	'{
-  		"caType": "Microsoft",
-  		"resources": [
-  			{
-  				"fqdn": "'+$Global:sddcMgr.fqdn+'",
-  				"name": "'+$Global:sddcMgr.fqdn.split(".")[0]+'",
-  				"resourceId": "'+$Global:sddcMgr.id+'",
-  				"type": "SDDC_MANAGER"
-  			},{
-  				"fqdn": "'+$Global:nsxtManager.fqdn+'",
-  				"name": "'+$Global:nsxtManager.fqdn.split(".")[0]+'",
-  				"resourceId": "'+$Global:nsxtManager.id+'",
-  				"type": "NSXT_MANAGER"
-  			},{
-  				"fqdn": "'+$Global:vCenterServer.fqdn+'",
-  				"name": "'+$Global:vCenterServer.fqdn.split(".")[0]+'",
-  				"resourceId": "'+$Global:vCenterServer.id+'",
-  				"type": "VCENTER"
-  			}
-  		]
-  	}' | Out-File -FilePath $Global:path"requestCertificateSpec.json"
+  $resourcesObject = @()
+    $resourcesObject += [pscustomobject]@{
+      'fqdn' = $Global:sddcMgr.fqdn
+      'name' = $Global:sddcMgr.fqdn.split(".")[0]
+      'resourceId' = $Global:sddcMgr.id
+      'type' = "SDDC_MANAGER"
+    }
+    $resourcesObject += [pscustomobject]@{
+      'fqdn' = $Global:vCenterServer.fqdn
+      'name' = $Global:vCenterServer.fqdn.split(".")[0]
+      'resourceId' = $Global:vCenterServer.id
+      'type' = "VCENTER"
+    }
+    if ($Global:sddcMgrVersion -eq "3") {
+      $resourcesObject += [pscustomobject]@{
+        'fqdn' = $Global:nsxvManager.fqdn
+        'name' = $Global:nsxvManager.fqdn.split(".")[0]
+        'resourceId' = $Global:nsxvManager.id
+        'type' = "NSX_MANAGER"
+      }
+      foreach ($psc in $Global:pscs) {
+        $resourcesObject += [pscustomobject]@{
+          'fqdn' = $psc.fqdn
+          'name' = $psc.fqdn.split(".")[0]
+          'resourceId' = $psc.id
+          'type' = "PSC"
+        }
+      }
+    }
+    if ($Global:sddcMgrVersion -eq "4") {
+      $resourcesObject += [pscustomobject]@{
+        'fqdn' = $Global:nsxtManager.fqdn
+        'name' = $Global:nsxtManager.fqdn.split(".")[0]
+        'resourceId' = $Global:nsxtManager.id
+        'type' = "NSXT_MANAGER"
+      }
+    }
+
+    $caTypeJson =
+    '{
+		"caType": "Microsoft",
+    '
+  $resourcesBodyObject += [pscustomobject]@{
+      resources = $resourcesObject
   }
+
+  $resourcesBodyObject | ConvertTo-Json | Out-File -FilePath $Global:path"temp.json"
+  Get-Content $Global:path"temp.json" | Select-Object -Skip 1 | Set-Content $Global:path"temp1.json"
+  $resouresJson = Get-Content $Global:path"temp1.json" -Raw
+  Remove-Item -Path $Global:path"temp.json"
+  Remove-Item -Path $Global:path"temp1.json"
+  $requestCertificateSpecJson = $caTypeJson + $resouresJson
+  $requestCertificateSpecJson | Out-File $Global:path"requestCertificateSpec.json"
 }
 
 Function generateUpdateCertificateSpec {
 
-if ($Global:sddcMgrVersion -eq "3") {
+  if ($Global:sddcMgrVersion -eq "3") {
     LogMessage "Populating updateCertificateSpec.json with SDDC Manager, vCenter Server, Platform Services Controllers and NSX-V Manager"
-  	$generateUpdateCertificateSpecbody =
-  	'{
-  		"operationType": "INSTALL",
-  		"resources": [
-  			{
-  				"fqdn": "'+$Global:sddcMgr.fqdn+'",
-  				"name": "'+$Global:sddcMgr.fqdn.split(".")[0]+'",
-  				"resourceId": "'+$Global:sddcMgr.id+'",
-  				"type": "SDDC_MANAGER"
-  			},{
-  				"fqdn": "'+$Global:nsxvManager.fqdn+'",
-  				"name": "'+$Global:nsxvManager.fqdn.split(".")[0]+'",
-  				"resourceId": "'+$Global:nsxvManager.id+'",
-  				"type": "NSXV_MANAGER"
-  			},{
-  				"fqdn": "'+$Global:vCenterServer.fqdn+'",
-  				"name": "'+$Global:vCenterServer.fqdn.split(".")[0]+'",
-  				"resourceId": "'+$Global:vCenterServer.id+'",
-  				"type": "VCENTER"
-  			}
-  		]
-  	}' | Out-File -FilePath $Global:path"updateCertificateSpec.json"
+  }
+  else {
+    LogMessage "Populating updateCertificateSpecc.json with SDDC Manager, vCenter Server and NSX-T Management Cluster"
   }
 
-if ($Global:sddcMgrVersion -eq "4") {
-    LogMessage "Populating updateCertificateSpec.json with SDDC Manager, vCenter Server and NSX-T Management Cluster"
-    $generateUpdateCertificateSpecbody =
-    '{
-      "operationType": "INSTALL",
-      "resources": [
-        {
-          "fqdn": "'+$Global:sddcMgr.fqdn+'",
-          "name": "'+$Global:sddcMgr.fqdn.split(".")[0]+'",
-          "resourceId": "'+$Global:sddcMgr.id+'",
-          "type": "SDDC_MANAGER"
-        },{
-          "fqdn": "'+$Global:nsxtManager.fqdn+'",
-          "name": "'+$Global:nsxtManager.fqdn.split(".")[0]+'",
-          "resourceId": "'+$Global:nsxtManager.id+'",
-          "type": "NSXT_MANAGER"
-        },{
-          "fqdn": "'+$Global:vCenterServer.fqdn+'",
-          "name": "'+$Global:vCenterServer.fqdn.split(".")[0]+'",
-          "resourceId": "'+$Global:vCenterServer.id+'",
-          "type": "VCENTER"
+
+  $resourcesObject = @()
+    $resourcesObject += [pscustomobject]@{
+      'fqdn' = $Global:sddcMgr.fqdn
+      'name' = $Global:sddcMgr.fqdn.split(".")[0]
+      'resourceId' = $Global:sddcMgr.id
+      'type' = "SDDC_MANAGER"
+    }
+    $resourcesObject += [pscustomobject]@{
+      'fqdn' = $Global:vCenterServer.fqdn
+      'name' = $Global:vCenterServer.fqdn.split(".")[0]
+      'resourceId' = $Global:vCenterServer.id
+      'type' = "VCENTER"
+    }
+    if ($Global:sddcMgrVersion -eq "3") {
+      $resourcesObject += [pscustomobject]@{
+        'fqdn' = $Global:nsxvManager.fqdn
+        'name' = $Global:nsxvManager.fqdn.split(".")[0]
+        'resourceId' = $Global:nsxvManager.id
+        'type' = "NSX_MANAGER"
+      }
+      foreach ($psc in $Global:pscs) {
+        $resourcesObject += [pscustomobject]@{
+          'fqdn' = $psc.fqdn
+          'name' = $psc.fqdn.split(".")[0]
+          'resourceId' = $psc.id
+          'type' = "PSC"
         }
-      ]
-    }' | Out-File -FilePath $Global:path"updateCertificateSpec.json"
+      }
+    }
+    if ($Global:sddcMgrVersion -eq "4") {
+      $resourcesObject += [pscustomobject]@{
+        'fqdn' = $Global:nsxtManager.fqdn
+        'name' = $Global:nsxtManager.fqdn.split(".")[0]
+        'resourceId' = $Global:nsxtManager.id
+        'type' = "NSXT_MANAGER"
+      }
+    }
+
+    $operationTypeJson =
+    '{
+		"operationType": "INSTALL",
+    '
+  $resourcesBodyObject += [pscustomobject]@{
+      resources = $resourcesObject
   }
+
+  $resourcesBodyObject | ConvertTo-Json | Out-File -FilePath $Global:path"temp.json"
+  Get-Content $Global:path"temp.json" | Select-Object -Skip 1 | Set-Content $Global:path"temp1.json"
+  $resouresJson = Get-Content $Global:path"temp1.json" -Raw
+  Remove-Item -Path $Global:path"temp.json"
+  Remove-Item -Path $Global:path"temp1.json"
+  $requestCertificateSpecJson = $operationTypeJson + $resouresJson
+  $requestCertificateSpecJson | Out-File $Global:path"updateCertificateSpec.json"
 }
 
 Clear-Host
