@@ -5,7 +5,7 @@
     .Group:         HCI BU
     .Organization:  VMware, Inc.
     .Version:       1.0 (Build 002)
-    .Date:          2020-02-13
+    .Date:          2020-02-18
     ===============================================================================================================
     .CREDITS
 
@@ -19,6 +19,8 @@
                                         - Refactor method for dynamic checking of VCF version
                                         - Added support for Platform Services Controllers in VCF 3.x
                                         - Added support for vRealize Log Insight in VCF 3.x
+    - 1.0.003 (Gary Blake / 2020-02-13) - Updated code with new cmdlet names for Get-VCFPsc, Get-VCFNsxtCluster
+                                          and Get-VCFNsxvManager
 
     ===============================================================================================================
     .DESCRIPTION
@@ -74,15 +76,15 @@ Function gatherSddcInventory {
   $Global:vCenterServer = Get-VCFvCenter
   if ($Global:sddcMgrVersion -eq "3") {
     LogMessage "Gathering Inventory for NSX-V Manager"
-    $Global:nsxvManager = Get-VCFnsxvManager
+    $Global:nsxvManager = Get-VCFNsxvManager
     LogMessage "Gathering Inventory for Platform Services Controllers"
-    $Global:pscs = Get-VCFPSC
+    $Global:pscs = Get-VCFPsc
     LogMessage "Gathering Inventory for vRealize Log Insight"
     $Global:logInsight = Get-VCFvRLI
   }
   if ($Global:sddcMgrVersion -eq "4") {
     LogMessage "Gathering Inventory for NSX-T Management Cluster"
-    $Global:nsxtManager = Get-VCFnsxtCluster
+    $Global:nsxtManager = Get-VCFNsxtCluster
   }
   $Global:sddcMgrVersion = $Global:sddcMgr.version.split(".")[0]
 }
