@@ -552,8 +552,8 @@ $pscObject = @()
 
 $vcenterObject = @()
     $vcenterObject += [pscustomobject]@{
-        'vcenterIp' = $mgmtWorksheet.Cells['H75'].Value
-		'vcenterHostname' = $mgmtWorksheet.Cells['D75'].Value
+        'vcenterIp' = $mgmtWorksheet.Cells['H76'].Value
+		'vcenterHostname' = $mgmtWorksheet.Cells['D76'].Value
 		'vcenterId' = "vcenter-1"
 		'licenseFile' = $mgmtWorksheet.Cells['C127'].Value
 		'rootVcenterPassword' = $defaultPassword
