@@ -133,7 +133,7 @@ $nsxtNode1Object = @()
     $nsxtNode1Object += [pscustomobject]@{
         'ipAddress' = $wldWorksheet.Cells['H83'].Value
         'dnsName' = $wldWorksheet.Cells['F83'].Value
-        'gateway' = $wldWorksheet.Cells['J9'].Value
+        'gateway' = $mgmtWorksheet.Cells['J10'].Value
         'subnetMask' = $managmentMask
     }
 
@@ -141,7 +141,7 @@ $nsxtNode2Object = @()
     $nsxtNode2Object += [pscustomobject]@{
         'ipAddress' = $wldWorksheet.Cells['H84'].Value
         'dnsName' = $wldWorksheet.Cells['F84'].Value
-        'gateway' = $wldWorksheet.Cells['J9'].Value
+        'gateway' = $mgmtWorksheet.Cells['J10'].Value
         'subnetMask' = $managmentMask
     }
 
@@ -149,7 +149,7 @@ $nsxtNode3Object = @()
     $nsxtNode3Object += [pscustomobject]@{
         'ipAddress' = $wldWorksheet.Cells['H85'].Value
         'dnsName' = $wldWorksheet.Cells['F85'].Value
-        'gateway' = $wldWorksheet.Cells['J9'].Value
+        'gateway' = $mgmtWorksheet.Cells['J10'].Value
         'subnetMask' = $managmentMask
     }
 
@@ -283,7 +283,7 @@ $vcenterNetworkObject = @()
     $vcenterNetworkObject += [pscustomobject]@{
         'ipAddress' = $wldWorksheet.Cells['H77'].Value
         'dnsName' = $wldWorksheet.Cells['F77'].Value
-        'gateway'= $wldWorksheet.Cells['J9'].Value
+        'gateway'= $mgmtWorksheet.Cells['J10'].Value
         'subnetMask' = $managmentMask
     }
 
