@@ -219,12 +219,12 @@ $portgroupObject = @()
 		'transportType' = "MANAGEMENT"
     }
     $portgroupObject += [pscustomobject]@{
-        'name' = $wldWorksheet.Cells['F10'].Value
-		'transportType' = "VSAN"
+        'name' = $wldWorksheet.Cells['F11'].Value
+		'transportType' = "VMOTION"
     }
     $portgroupObject += [pscustomobject]@{
-        'name' = $wldWorksheet.Cells['F10'].Value
-		'transportType' = "VMOTION"
+        'name' = $wldWorksheet.Cells['F12'].Value
+		'transportType' = "VSAN"
     }
 
 $vdsObject = @()
