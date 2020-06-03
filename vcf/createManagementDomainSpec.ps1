@@ -468,11 +468,70 @@ else {
     $evcMode = $mgmtWorksheet.Cells['G150'].Value
 }
 
+$resourcePoolObject = @()
+    $resourcePoolObject += [pscustomobject]@{
+        'type' = "management"
+        'name' = $mgmtWorksheet.Cells['G151'].Value
+        'cpuSharesLevel' = "high"
+        'cpuSharesValue' = "0" -as [int]
+        'cpuLimit' = "-1" -as [int]
+        'cpuReservationExpandable' = $true
+        'cpuReservationPercentage' = "0" -as [int]
+        'memorySharesLevel' = "normal"
+        'memorySharesValue' = "0" -as [int]
+        'memoryLimit' = "-1" -as [int]
+        'memoryReservationExpandable' = $true
+        'memoryReservationPercentage' = "0" -as [int]   
+    }
+    $resourcePoolObject += [pscustomobject]@{
+        'type' = "network"
+        'name' = $mgmtWorksheet.Cells['G152'].Value
+        'cpuSharesLevel' = "high"
+        'cpuSharesValue' = "0" -as [int]
+        'cpuLimit' = "-1" -as [int]
+        'cpuReservationExpandable' = $true
+        'cpuReservationPercentage' = "0" -as [int]
+        'memorySharesLevel' = "normal"
+        'memorySharesValue' = "0" -as [int]
+        'memoryLimit' = "-1" -as [int]
+        'memoryReservationExpandable' = $true
+        'memoryReservationPercentage' = "0" -as [int]  
+    }
+    $resourcePoolObject += [pscustomobject]@{
+        'type' = "compute"
+        'name' = $mgmtWorksheet.Cells['G153'].Value
+        'cpuSharesLevel' = "normal"
+        'cpuSharesValue' = "0" -as [int]
+        'cpuLimit' = "-1" -as [int]
+        'cpuReservationExpandable' = $true
+        'cpuReservationPercentage' = "0" -as [int]
+        'memorySharesLevel' = "normal"
+        'memorySharesValue' = "0" -as [int]
+        'memoryLimit' = "-1" -as [int]
+        'memoryReservationExpandable' = $true
+        'memoryReservationPercentage' = "0" -as [int]  
+    }
+    $resourcePoolObject += [pscustomobject]@{
+        'type' = "compute"
+        'name' = $mgmtWorksheet.Cells['G154'].Value
+        'cpuSharesLevel' = "normal"
+        'cpuSharesValue' = "0" -as [int]
+        'cpuLimit' = "-1" -as [int]
+        'cpuReservationExpandable' = $true
+        'cpuReservationPercentage' = "0" -as [int]
+        'memorySharesLevel' = "normal"
+        'memorySharesValue' = "0" -as [int]
+        'memoryLimit' = "-1" -as [int]
+        'memoryReservationExpandable' = $true
+        'memoryReservationPercentage' = "0" -as [int]
+    }
+
 $clusterObject = @()
     $clusterObject += [pscustomobject]@{
         vmFolders = ($vmFolderObject | Select-Object -Skip 0)
         'clusterName' = $mgmtWorksheet.Cells['G149'].Value
         'clusterEvcMode' = $evcMode
+        resourcePoolSpecs = $resourcePoolObject
     }
 
 $ssoObject = @()
