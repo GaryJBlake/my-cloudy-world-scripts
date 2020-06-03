@@ -26,7 +26,7 @@
 
     .EXAMPLE
 
-    .\createManagementDomainSpec.ps1 -workbook E:\pnpWorkbook.xlsx -json E:\MyLab\sfo\sfo-workloadDomain.json -DefaultPassword VMw@re1! -nsxtPassword VMw@re1!
+    .\createManagementDomainSpec.ps1 -workbook E:\pnpWorkbook.xlsx -json E:\MyLab\sfo\sfo-managementDomain.json -DefaultPassword VMw@re1! -nsxtPassword VMw@re1!
 #>
  
  Param(
