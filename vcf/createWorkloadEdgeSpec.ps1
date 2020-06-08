@@ -79,6 +79,14 @@ Catch {
 LogMessage " Stating the Process of Generating the $module" Yellow
 LogMessage " Opening the Excel Workbook: $Workbook"
 $pnpWorkbook = Open-ExcelPackage -Path $Workbook
+
+LogMessage " Checking Valid Planning and Prepatation Workbook Provided"
+$optionsWorksheet = $pnpWorkbook.Workbook.Worksheets[‘Deployment Options’]
+if ($optionsWorksheet.Cells['J8'].Value -ne "v4.0.0") {
+    LogMessage " Planning and Prepatation Workbook Provided Not Supported" Red 
+    Break
+}
+
 LogMessage " Extracting Worksheet Data from the Excel Workbook"
 $wldWorksheet = $pnpWorkbook.Workbook.Worksheets[‘Workload Domain’]
 $mgmtWorksheet = $pnpWorkbook.Workbook.Worksheets[‘Management Domain’]
