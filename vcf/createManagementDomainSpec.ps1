@@ -5,7 +5,7 @@
     .Group:         HCI BU
     .Organization:  VMware, Inc.
     .Version:       1.0 (Build 001)
-    .Date:          2020-06-02
+    .Date:          2020-06-015
     ===============================================================================================================
     .CREDITS
 
@@ -16,6 +16,7 @@
     .CHANGE_LOG
 
     - 1.0.000 (Gary Blake / 2020-06-02) - Initial script creation
+    - 1.0.001 (Gary Blake / 2020-06-15) - Minor fixes
 
     ===============================================================================================================
     .DESCRIPTION
@@ -122,14 +123,14 @@ LogMessage " Opening the Excel Workbook: $Workbook"
 $pnpWorkbook = Open-ExcelPackage -Path $Workbook
 
 LogMessage " Checking Valid Planning and Prepatation Workbook Provided"
-$optionsWorksheet = $pnpWorkbook.Workbook.Worksheets[‘Deployment Options’]
+$optionsWorksheet = $pnpWorkbook.Workbook.Worksheets["Deployment Options"]
 if ($optionsWorksheet.Cells['J8'].Value -ne "v4.0.0") {
     LogMessage " Planning and Prepatation Workbook Provided Not Supported" Red 
     Break
 }
 
 LogMessage " Extracting Worksheet Data from the Excel Workbook"
-$mgmtWorksheet = $pnpWorkbook.Workbook.Worksheets[‘Management Domain’]
+$mgmtWorksheet = $pnpWorkbook.Workbook.Worksheets["Management Domain"]
 
 LogMessage " Generating the $module"
 
