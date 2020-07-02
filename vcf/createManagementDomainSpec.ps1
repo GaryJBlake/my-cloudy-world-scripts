@@ -123,553 +123,567 @@ LogMessage " Opening the Excel Workbook: $Workbook"
 $pnpWorkbook = Open-ExcelPackage -Path $Workbook
 
 LogMessage " Checking Valid Planning and Prepatation Workbook Provided"
-$optionsWorksheet = $pnpWorkbook.Workbook.Worksheets["Deployment Options"]
-if ($optionsWorksheet.Cells['J8'].Value -ne "v4.0.0") {
+if ($pnpWorkbook.Workbook.Names["vcf_version"].Value -ne "v4.0.1") {
     LogMessage " Planning and Prepatation Workbook Provided Not Supported" Red 
     Break
 }
 
 LogMessage " Extracting Worksheet Data from the Excel Workbook"
-$mgmtWorksheet = $pnpWorkbook.Workbook.Worksheets["Management Domain"]
-
 LogMessage " Generating the $module"
 
-$cidr = $mgmtWorksheet.Cells['H10'].Value.split("/")
+$cidr = $pnpWorkbook.Workbook.Names["mgmt_mgmt_cidr"].Value.split("/")
 $managmentMask = cidrToMask $cidr[1]
 
 $ntpServers = New-Object System.Collections.ArrayList
-if ($mgmtWorksheet.Cells['D57'].Value -eq "n/a") {
-    [Array]$ntpServers = $mgmtWorksheet.Cells['D56'].Value
-}
-else {
-    [Array]$ntpServers = $mgmtWorksheet.Cells['D56'].Value,$mgmtWorksheet.Cells['D57'].Value
-}
-
-$dnsObject = @()
-    $dnsObject += [pscustomobject]@{
-        'domain' = $mgmtWorksheet.Cells['D190'].Value
-        'subdomain' = $mgmtWorksheet.Cells['D190'].Value
-        'nameserver' = $mgmtWorksheet.Cells['D62'].Value
-        'secondaryNameserver' = $mgmtWorksheet.Cells['D63'].Value
+    if ($pnpWorkbook.Workbook.Names["region_ntp2_ip"].Value -eq "n/a") {
+        [Array]$ntpServers = $pnpWorkbook.Workbook.Names["region_ntp1_ip"].Value
+    }
+    else {
+        [Array]$ntpServers = $pnpWorkbook.Workbook.Names["region_ntp1_ip"].Value,$pnpWorkbook.Workbook.Names["region_ntp2_ip"].Value
     }
 
-$rootUserObject = @()
-    $rootUserObject += [pscustomobject]@{
-        'username' = "root"
-        'password' = $defaultPassword
-    }
+    $dnsObject = @()
+        $dnsObject += [pscustomobject]@{
+            'domain' = $pnpWorkbook.Workbook.Names["region_ad_child"].Value
+            'subdomain' = $pnpWorkbook.Workbook.Names["region_ad_child"].Value
+            'nameserver' = $pnpWorkbook.Workbook.Names["region_dns1_ip"].Value
+            'secondaryNameserver' = $pnpWorkbook.Workbook.Names["region_dns1_ip"].Value
+        }
 
-$secondUserObject = @()
-    $secondUserObject += [pscustomobject]@{
-        'username' = "vcf"
-        'password' = $defaultPassword
-    }
+    $rootUserObject = @()
+        $rootUserObject += [pscustomobject]@{
+            'username' = "root"
+            'password' = $defaultPassword
+        }
 
-$restApiUserObject = @()
-    $restApiUserObject += [pscustomobject]@{
-        'username' = "admin"
-        'password' = $defaultPassword
-    }
+    $secondUserObject = @()
+        $secondUserObject += [pscustomobject]@{
+            'username' = "vcf"
+            'password' = $defaultPassword
+        }
 
-$sddcManagerObject = @()
-    $sddcManagerObject += [pscustomobject]@{
-        'hostname' = $mgmtWorksheet.Cells['D75'].Value
-        'ipAddress' = $mgmtWorksheet.Cells['H75'].Value
-        'netmask' = $managmentMask
-        rootUserCredentials = ($rootUserObject | Select-Object -Skip 0)
-        restApiCredentials = ($restApiUserObject | Select-Object -Skip 0)
-        secondUserCredentials = ($secondUserObject | Select-Object -Skip 0)
-    }
+    $restApiUserObject = @()
+        $restApiUserObject += [pscustomobject]@{
+            'username' = "admin"
+            'password' = $defaultPassword
+        }
 
-$vmnics = New-Object System.Collections.ArrayList
-[Array]$vmnics = $mgmtWorksheet.Cells['G139'].Value,$mgmtWorksheet.Cells['G140'].Value
-
-$networks = New-Object System.Collections.ArrayList
-[Array]$networks = "MANAGEMENT","VMOTION","VSAN","UPLINK01","UPLINK02","NSXT_EDGE_TEP"
-
-$vmotionIpObject = @()
-    $vmotionIpObject += [pscustomobject]@{
-        'startIpAddress' = $mgmtWorksheet.Cells['H98'].Value
-        'endIpAddress' = $mgmtWorksheet.Cells['H99'].Value
-    }
-
-$vsanIpObject = @()
-    $vsanIpObject += [pscustomobject]@{
-        'startIpAddress' = $mgmtWorksheet.Cells['H100'].Value
-        'endIpAddress' = $mgmtWorksheet.Cells['H101'].Value
-    }
-
-$networkObject = @()
-    $networkObject += [pscustomobject]@{
-        'networkType' = "MANAGEMENT"
-        'subnet' = $mgmtWorksheet.Cells['H10'].Value
-        'vlanId' = $mgmtWorksheet.Cells['D10'].Value -as [string]
-        'mtu' = $mgmtWorksheet.Cells['L10'].Value -as [string]
-        'gateway' = $mgmtWorksheet.Cells['J10'].Value
-        'portGroupKey' = $mgmtWorksheet.Cells['F10'].Value
-        'association' = $mgmtWorksheet.Cells['G148'].Value
-    }
-    $networkObject += [pscustomobject]@{
-        'networkType' = "VMOTION"
-        'subnet' = $mgmtWorksheet.Cells['H11'].Value
-        includeIpAddressRanges = $vmotionIpObject
-        'vlanId' = $mgmtWorksheet.Cells['D11'].Value -as [string]
-        'mtu' = $mgmtWorksheet.Cells['L11'].Value -as [string]
-        'gateway' = $mgmtWorksheet.Cells['J11'].Value
-        'portGroupKey' = $mgmtWorksheet.Cells['F11'].Value
-        'association' = $mgmtWorksheet.Cells['G148'].Value
-    }
-    $networkObject += [pscustomobject]@{
-        'networkType' = "VSAN"
-        'subnet' = $mgmtWorksheet.Cells['H12'].Value
-        includeIpAddressRanges = $vsanIpObject
-        'vlanId' = $mgmtWorksheet.Cells['D12'].Value -as [string]
-        'mtu' = $mgmtWorksheet.Cells['L12'].Value -as [string]
-        'gateway' = $mgmtWorksheet.Cells['J12'].Value
-        'portGroupKey' = $mgmtWorksheet.Cells['F12'].Value
-        'association' = $mgmtWorksheet.Cells['G148'].Value
-    }
-    $networkObject += [pscustomobject]@{
-        'networkType' = "UPLINK01"
-        'subnet' = $mgmtWorksheet.Cells['H14'].Value
-        'vlanId' = $mgmtWorksheet.Cells['D14'].Value -as [string]
-        'mtu' = $mgmtWorksheet.Cells['L14'].Value -as [string]
-        'gateway' = $mgmtWorksheet.Cells['J14'].Value
-        'portGroupKey' = $mgmtWorksheet.Cells['F14'].Value
-        'association' = $mgmtWorksheet.Cells['G148'].Value
-    }
-    $networkObject += [pscustomobject]@{
-        'networkType' = "UPLINK02"
-        'subnet' = $mgmtWorksheet.Cells['H15'].Value
-        'vlanId' = $mgmtWorksheet.Cells['D15'].Value -as [string]
-        'mtu' = $mgmtWorksheet.Cells['L15'].Value -as [string]
-        'gateway' = $mgmtWorksheet.Cells['J15'].Value
-        'portGroupKey' = $mgmtWorksheet.Cells['F15'].Value
-        'association' = $mgmtWorksheet.Cells['G148'].Value
-    }
-    $networkObject += [pscustomobject]@{
-        'networkType' = "NSXT_EDGE_TEP"
-        'subnet' = $mgmtWorksheet.Cells['H16'].Value
-        'vlanId' = $mgmtWorksheet.Cells['D16'].Value -as [string]
-        'mtu' = $mgmtWorksheet.Cells['L16'].Value -as [string]
-        'gateway' = $mgmtWorksheet.Cells['J16'].Value
-        'association' = $mgmtWorksheet.Cells['G148'].Value
-    }
-    $networkObject += [pscustomobject]@{
-        'networkType' = "REGION_SPECIFIC"
-        'subnet' = $mgmtWorksheet.Cells['H19'].Value
-        'vlanId' = "0"
-        'mtu' = $mgmtWorksheet.Cells['G142'].Value -as [string]
-        'gateway' = $mgmtWorksheet.Cells['J19'].Value
-        'association' = $mgmtWorksheet.Cells['G148'].Value
-    }
-    $networkObject += [pscustomobject]@{
-        'networkType' = "X_REGION"
-        'subnet' = $mgmtWorksheet.Cells['H20'].Value
-        'vlanId' = "0"
-        'mtu' = $mgmtWorksheet.Cells['G142'].Value -as [string]
-        'gateway' = $mgmtWorksheet.Cells['J20'].Value
-        'association' = $mgmtWorksheet.Cells['G148'].Value
-    }
-
-
-$nsxtManagerObject = @()
-    $nsxtManagerObject += [pscustomobject]@{
-        'hostname' = $mgmtWorksheet.Cells['D82'].Value
-        'ip' = $mgmtWorksheet.Cells['H82'].Value
-    }
-$nsxtManagerObject += [pscustomobject]@{
-        'hostname' = $mgmtWorksheet.Cells['D83'].Value
-        'ip' = $mgmtWorksheet.Cells['H83'].Value
-    }
-$nsxtManagerObject += [pscustomobject]@{
-        'hostname' = $mgmtWorksheet.Cells['D84'].Value
-        'ip' = $mgmtWorksheet.Cells['H84'].Value
-    }
-
-$vlanTransportZoneObject = @()
-    $vlanTransportZoneObject += [pscustomobject]@{
-        'zoneName' = $mgmtWorksheet.Cells['G135'].Value+"-tz-vlan01"
-        'networkName' = "netName-vlan"
-    }
-
-$overlayTransportZoneObject = @()
-    $overlayTransportZoneObject += [pscustomobject]@{
-        'zoneName' = $mgmtWorksheet.Cells['G135'].Value+"-tz-overlay01"
-        'networkName' = "netName-overlay"
-    }
-
-$edgeNode01interfaces = @()
-    $edgeNode01interfaces += [pscustomobject]@{
-        'name' = $mgmtWorksheet.Cells['G135'].Value+"-uplink01-tor1"
-        'interfaceCidr' = $mgmtWorksheet.Cells['H86'].Value+"/"+$mgmtWorksheet.Cells['H14'].Value.split("/")[-1]
-    }
-    $edgeNode01interfaces += [pscustomobject]@{
-        'name' = $mgmtWorksheet.Cells['G135'].Value+"-uplink01-tor2"
-        'interfaceCidr' = $mgmtWorksheet.Cells['H87'].Value+"/"+$mgmtWorksheet.Cells['H15'].Value.split("/")[-1]
-    }
-
-$edgeNode02interfaces = @()
-     $edgeNode02interfaces += [pscustomobject]@{
-        'name' = $mgmtWorksheet.Cells['G135'].Value+"-uplink01-tor1"
-        'interfaceCidr' = $mgmtWorksheet.Cells['H91'].Value+"/"+$mgmtWorksheet.Cells['H14'].Value.split("/")[-1]
-    }
-    $edgeNode02interfaces += [pscustomobject]@{
-        'name' = $mgmtWorksheet.Cells['G135'].Value+"-uplink01-tor2"
-        'interfaceCidr' = $mgmtWorksheet.Cells['H92'].Value+"/"+$mgmtWorksheet.Cells['H15'].Value.split("/")[-1]
+    $sddcManagerObject = @()
+        $sddcManagerObject += [pscustomobject]@{
+            'hostname' = $pnpWorkbook.Workbook.Names["sddc_mgr_hostname"].Value
+            'ipAddress' = $pnpWorkbook.Workbook.Names["sddc_mgr_ip"].Value
+            'netmask' = $managmentMask
+            rootUserCredentials = ($rootUserObject | Select-Object -Skip 0)
+            restApiCredentials = ($restApiUserObject | Select-Object -Skip 0)
+            secondUserCredentials = ($secondUserObject | Select-Object -Skip 0)
+        }
     
+    $vmnics = New-Object System.Collections.ArrayList
+    [Array]$vmnics = $($pnpWorkbook.Workbook.Names["primary_vds_vmnics"].Value.Split(',')[0]),$($pnpWorkbook.Workbook.Names["primary_vds_vmnics"].Value.Split(',')[1])
+
+    $networks = New-Object System.Collections.ArrayList
+    [Array]$networks = "MANAGEMENT","VMOTION","VSAN","UPLINK01","UPLINK02","NSXT_EDGE_TEP"
+
+    $vmotionIpObject = @()
+        $vmotionIpObject += [pscustomobject]@{
+            'startIpAddress' = $pnpWorkbook.Workbook.Names["mgmt_vmotion_pool_start"].Value
+            'endIpAddress' = $pnpWorkbook.Workbook.Names["mgmt_vmotion_pool_end"].Value
+        }
+
+    $vsanIpObject = @()
+        $vsanIpObject += [pscustomobject]@{
+            'startIpAddress' = $pnpWorkbook.Workbook.Names["mgmt_vsan_pool_start"].Value
+            'endIpAddress' = $pnpWorkbook.Workbook.Names["mgmt_vsan_pool_end"].Value
+        }
+
+    $networkObject = @()
+        $networkObject += [pscustomobject]@{
+            'networkType' = "MANAGEMENT"
+            'subnet' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_cidr"].Value
+            'vlanId' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_vlan"].Value -as [string]
+            'mtu' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_mtu"].Value -as [string]
+            'gateway' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_gateway"].Value
+            'portGroupKey' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_pg"].Value
+            'association' = $pnpWorkbook.Workbook.Names["mgmt_datacenter"].Value
+        }
+        $networkObject += [pscustomobject]@{
+            'networkType' = "VMOTION"
+            'subnet' = $pnpWorkbook.Workbook.Names["mgmt_vmotion_cidr"].Value
+            includeIpAddressRanges = $vmotionIpObject
+            'vlanId' = $pnpWorkbook.Workbook.Names["mgmt_vmotion_vlan"].Value -as [string]
+            'mtu' = $pnpWorkbook.Workbook.Names["mgmt_vmotion_mtu"].Value -as [string]
+            'gateway' = $pnpWorkbook.Workbook.Names["mgmt_vmotion_gateway"].Value
+            'portGroupKey' = $pnpWorkbook.Workbook.Names["mgmt_vmotion_pg"].Value
+            'association' = $pnpWorkbook.Workbook.Names["mgmt_datacenter"].Value
+        }
+        $networkObject += [pscustomobject]@{
+            'networkType' = "VSAN"
+            'subnet' = $pnpWorkbook.Workbook.Names["mgmt_vsan_cidr"].Value
+            includeIpAddressRanges = $vsanIpObject
+            'vlanId' = $pnpWorkbook.Workbook.Names["mgmt_vsan_vlan"].Value
+            'mtu' = $pnpWorkbook.Workbook.Names["mgmt_vsan_mtu"].Value -as [string]
+            'gateway' = $pnpWorkbook.Workbook.Names["mgmt_vsan_gateway"].Value
+            'portGroupKey' = $pnpWorkbook.Workbook.Names["mgmt_vsan_pg"].Value
+            'association' = $pnpWorkbook.Workbook.Names["mgmt_datacenter"].Value
+        }
+        $networkObject += [pscustomobject]@{
+            'networkType' = "UPLINK01"
+            'subnet' = $pnpWorkbook.Workbook.Names["mgmt_uplink01_cidr"].Value
+            'vlanId' = $pnpWorkbook.Workbook.Names["mgmt_uplink01_vlan"].Value -as [string]
+            'mtu' = $pnpWorkbook.Workbook.Names["mgmt_uplink01_mtu"].Value -as [string]
+            'gateway' = $pnpWorkbook.Workbook.Names["mgmt_uplink01_gateway"].Value
+            'portGroupKey' = $pnpWorkbook.Workbook.Names["mgmt_uplink01_pg"].Value
+            'association' = $pnpWorkbook.Workbook.Names["mgmt_datacenter"].Value
+        }
+        $networkObject += [pscustomobject]@{
+            'networkType' = "UPLINK02"
+            'subnet' = $pnpWorkbook.Workbook.Names["mgmt_uplink02_cidr"].Value
+            'vlanId' = $pnpWorkbook.Workbook.Names["mgmt_uplink02_vlan"].Value -as [string]
+            'mtu' = $pnpWorkbook.Workbook.Names["mgmt_uplink02_mtu"].Value -as [string]
+            'gateway' = $pnpWorkbook.Workbook.Names["mgmt_uplink02_gateway"].Value
+            'portGroupKey' = $pnpWorkbook.Workbook.Names["mgmt_uplink02_pg"].Value
+            'association' = $pnpWorkbook.Workbook.Names["mgmt_datacenter"].Value
+        }
+        $networkObject += [pscustomobject]@{
+            'networkType' = "NSXT_EDGE_TEP"
+            'subnet' = $pnpWorkbook.Workbook.Names["mgmt_edge_overlay_cidr"].Value
+            'vlanId' = $pnpWorkbook.Workbook.Names["mgmt_edge_overlay_vlan"].Value -as [string]
+            'mtu' = $pnpWorkbook.Workbook.Names["mgmt_edge_overlay_mtu"].Value -as [string]
+            'gateway' = $pnpWorkbook.Workbook.Names["mgmt_edge_overlay_gateway"].Value
+            'association' = $pnpWorkbook.Workbook.Names["mgmt_datacenter"].Value
+        }
+        $networkObject += [pscustomobject]@{
+            'networkType' = "REGION_SPECIFIC"
+            'subnet' = $pnpWorkbook.Workbook.Names["reg_seg01_cidr"].Value
+            'vlanId' = "0"
+            'mtu' = $pnpWorkbook.Workbook.Names["primary_vds_mtu"].Value -as [string]
+            'gateway' = $pnpWorkbook.Workbook.Names["reg_seg01_gateway"].Value
+            'association' = $pnpWorkbook.Workbook.Names["mgmt_datacenter"].Value
+        }
+        $networkObject += [pscustomobject]@{
+            'networkType' = "X_REGION"
+            'subnet' = $pnpWorkbook.Workbook.Names["xreg_seg01_cidr"].Value
+            'vlanId' = "0"
+            'mtu' = $pnpWorkbook.Workbook.Names["primary_vds_mtu"].Value -as [string]
+            'gateway' = $pnpWorkbook.Workbook.Names["xreg_seg01_gateway"].Value
+            'association' = $pnpWorkbook.Workbook.Names["mgmt_datacenter"].Value
+        }
+
+
+    $nsxtManagerObject = @()
+        $nsxtManagerObject += [pscustomobject]@{
+            'hostname' = $pnpWorkbook.Workbook.Names["mgmt_nsxt_mgra_hostname"].Value
+            'ip' = $pnpWorkbook.Workbook.Names["mgmt_nsxt_mgra_ip"].Value
+        }
+    $nsxtManagerObject += [pscustomobject]@{
+            'hostname' = $pnpWorkbook.Workbook.Names["mgmt_nsxt_mgrb_hostname"].Value
+            'ip' = $pnpWorkbook.Workbook.Names["mgmt_nsxt_mgrb_ip"].Value
+        }
+    $nsxtManagerObject += [pscustomobject]@{
+            'hostname' = $pnpWorkbook.Workbook.Names["mgmt_nsxt_mgrc_hostname"].Value
+            'ip' = $pnpWorkbook.Workbook.Names["mgmt_nsxt_mgrc_ip"].Value
+        }
+
+    $vlanTransportZoneObject = @()
+        $vlanTransportZoneObject += [pscustomobject]@{
+            'zoneName' = $pnpWorkbook.Workbook.Names["mgmt_sddc_domain"].Value+"-tz-vlan01"
+            'networkName' = "netName-vlan"
+        }
+
+    $overlayTransportZoneObject = @()
+        $overlayTransportZoneObject += [pscustomobject]@{
+            'zoneName' = $pnpWorkbook.Workbook.Names["mgmt_sddc_domain"].Value+"-tz-overlay01"
+            'networkName' = "netName-overlay"
+        }
+
+    $edgeNode01interfaces = @()
+        $edgeNode01interfaces += [pscustomobject]@{
+            'name' = $pnpWorkbook.Workbook.Names["mgmt_sddc_domain"].Value+"-uplink01-tor1"
+            'interfaceCidr' = $pnpWorkbook.Workbook.Names["mgmt_en1_uplink1_interface_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["mgmt_uplink01_cidr"].Value.split("/")[-1]
+        }
+        $edgeNode01interfaces += [pscustomobject]@{
+            'name' = $pnpWorkbook.Workbook.Names["mgmt_sddc_domain"].Value+"-uplink01-tor2"
+            'interfaceCidr' = $pnpWorkbook.Workbook.Names["mgmt_en1_uplink2_interface_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["mgmt_uplink02_cidr"].Value.split("/")[-1]
+        }
+
+    $edgeNode02interfaces = @()
+        $edgeNode02interfaces += [pscustomobject]@{
+            'name' = $pnpWorkbook.Workbook.Names["mgmt_sddc_domain"].Value+"-uplink01-tor1"
+            'interfaceCidr' = $pnpWorkbook.Workbook.Names["mgmt_en2_uplink1_interface_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["mgmt_uplink01_cidr"].Value.split("/")[-1]
+        }
+        $edgeNode02interfaces += [pscustomobject]@{
+            'name' = $pnpWorkbook.Workbook.Names["mgmt_sddc_domain"].Value+"-uplink01-tor2"
+            'interfaceCidr' = $pnpWorkbook.Workbook.Names["mgmt_en2_uplink2_interface_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["mgmt_uplink02_cidr"].Value.split("/")[-1]
+        
+        }
+
+    $edgeNodeObject = @()
+        $edgeNodeObject += [pscustomobject]@{
+            'edgeNodeName' = $pnpWorkbook.Workbook.Names["mgmt_en1_hostname"].Value
+            'edgeNodeHostname' = $pnpWorkbook.Workbook.Names["mgmt_en1_fqdn"].Value
+            'managementCidr' = $pnpWorkbook.Workbook.Names["mgmt_en1_mgmt_interface_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["mgmt_mgmt_cidr"].Value.split("/")[-1]
+            'edgeVtep1Cidr' = $pnpWorkbook.Workbook.Names["mgmt_en1_edge_overlay_interface_ip_1"].Value+"/"+$pnpWorkbook.Workbook.Names["mgmt_edge_overlay_cidr"].Value.split("/")[-1]
+            'edgeVtep2Cidr' = $pnpWorkbook.Workbook.Names["mgmt_en1_edge_overlay_interface_ip_2"].Value+"/"+$pnpWorkbook.Workbook.Names["mgmt_edge_overlay_cidr"].Value.split("/")[-1]
+            interfaces = $edgeNode01interfaces
+        }
+        $edgeNodeObject += [pscustomobject]@{
+            'edgeNodeName' = $pnpWorkbook.Workbook.Names["mgmt_en2_hostname"].Value
+            'edgeNodeHostname' = $pnpWorkbook.Workbook.Names["mgmt_en2_fqdn"].Value
+            'managementCidr' = $pnpWorkbook.Workbook.Names["mgmt_en2_mgmt_interface_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["mgmt_mgmt_cidr"].Value.split("/")[-1]
+            'edgeVtep1Cidr' = $pnpWorkbook.Workbook.Names["mgmt_en2_edge_overlay_interface_ip_1"].Value+"/"+$pnpWorkbook.Workbook.Names["mgmt_edge_overlay_cidr"].Value.split("/")[-1]
+            'edgeVtep2Cidr' = $pnpWorkbook.Workbook.Names["mgmt_en2_edge_overlay_interface_ip_2"].Value+"/"+$pnpWorkbook.Workbook.Names["mgmt_edge_overlay_cidr"].Value.split("/")[-1]
+            interfaces = $edgeNode02interfaces
+        }
+
+    $edgeServicesObject = @()
+        $edgeServicesObject += [pscustomobject]@{
+            'tier0GatewayName' = $pnpWorkbook.Workbook.Names["mgmt_sddc_domain"].Value+"-ec01-t0-gw01"
+            'tier1GatewayName' = $pnpWorkbook.Workbook.Names["mgmt_sddc_domain"].Value+"-ec01-t1-gw01"
+        }
+
+    $bgpNeighboursObject = @()
+        $bgpNeighboursObject += [pscustomobject]@{
+            'neighbourIp' = $pnpWorkbook.Workbook.Names["mgmt_tor1_peer_ip"].Value
+            'autonomousSystem' = $pnpWorkbook.Workbook.Names["mgmt_tor1_peer_asn"].Value
+            'password' = $pnpWorkbook.Workbook.Names["mgmt_tor1_peer_bgp_password"].Value
+        }
+        $bgpNeighboursObject += [pscustomobject]@{
+            'neighbourIp' = $pnpWorkbook.Workbook.Names["mgmt_tor2_peer_ip"].Value
+            'autonomousSystem' = $pnpWorkbook.Workbook.Names["mgmt_tor2_peer_asn"].Value
+            'password' = $pnpWorkbook.Workbook.Names["mgmt_tor2_peer_bgp_password"].Value
+        }
+
+    $nsxtEdgeObject = @()
+        $nsxtEdgeObject += [pscustomobject]@{
+            'edgeClusterName' = $pnpWorkbook.Workbook.Names["mgmt_ec_name"].Value
+            'edgeRootPassword' = $nsxtPassword
+            'edgeAdminPassword' = $nsxtPassword
+            'edgeAuditPassword' = $nsxtPassword
+            'edgeFormFactor' = $pnpWorkbook.Workbook.Names["mgmt_nsxt_mgr_formfactor"].Value.ToUpper()
+            'tier0ServicesHighAvailability' = "ACTIVE_ACTIVE"
+            'asn' = $pnpWorkbook.Workbook.Names["mgmt_en_asn"].Value
+            edgeServicesSpecs = ($edgeServicesObject | Select-Object -Skip 0)
+            edgeNodeSpecs = $edgeNodeObject
+            bgpNeighbours = $bgpNeighboursObject
+        }
+
+    $logicalSegmentsObject = @()
+        $logicalSegmentsObject += [pscustomobject]@{
+            'name' = $pnpWorkbook.Workbook.Names["reg_seg01_name"].Value
+            'networkType' = "REGION_SPECIFIC"
+        }
+        $logicalSegmentsObject += [pscustomobject]@{
+            'name' = $pnpWorkbook.Workbook.Names["xreg_seg01_name"].Value
+            'networkType' = "X_REGION"
+        }
+
+    $nsxtObject = @()
+        $nsxtObject += [pscustomobject]@{
+            'nsxtManagerSize' = $pnpWorkbook.Workbook.Names["mgmt_nsxt_mgr_formfactor"].Value
+            nsxtManagers = $nsxtManagerObject
+            'rootNsxtManagerPassword' = $nsxtPassword
+            'nsxtAdminPassword' = $nsxtPassword
+            'nsxtAuditPassword' = $nsxtPassword
+            'rootLoginEnabledForNsxtManager' = "true"
+            'sshEnabledForNsxtManager' = "true"
+            overLayTransportZone = ($overlayTransportZoneObject | Select-Object -Skip 0)
+            vlanTransportZone = ($vlanTransportZoneObject | Select-Object -Skip 0)
+            'vip' = $pnpWorkbook.Workbook.Names["mgmt_nsxt_vip_ip"].Value
+            'vipFqdn' = $pnpWorkbook.Workbook.Names["mgmt_nsxt_vip_fqdn"].Value
+            'nsxtLicense' = $pnpWorkbook.Workbook.Names["nsxt_license"].Value
+            'transportVlanId' = $pnpWorkbook.Workbook.Names["mgmt_host_overlay_vlan"].Value
+            nsxtEdgeSpec = ($nsxtEdgeObject | Select-Object -Skip 0)
+            logicalSegments = $logicalSegmentsObject
+        }
+
+    $excelvsanDedup = $pnpWorkbook.Workbook.Names["mgmt_vsan_dedup"].Value
+    if ($excelvsanDedup -eq "No") {
+        $vsanDedup = $false
+    }
+    elseif ($excelvsanDedup -eq "Yes") {
+        $vsanDedup = $true
     }
 
-$edgeNodeObject = @()
-    $edgeNodeObject += [pscustomobject]@{
-        'edgeNodeName' = $mgmtWorksheet.Cells['D85'].Value
-        'edgeNodeHostname' = $mgmtWorksheet.Cells['F85'].Value
-        'managementCidr' = $mgmtWorksheet.Cells['H85'].Value+"/"+$mgmtWorksheet.Cells['H10'].Value.split("/")[-1]
-        'edgeVtep1Cidr' = $mgmtWorksheet.Cells['H88'].Value+"/"+$mgmtWorksheet.Cells['H16'].Value.split("/")[-1]
-        'edgeVtep2Cidr' = $mgmtWorksheet.Cells['H89'].Value+"/"+$mgmtWorksheet.Cells['H16'].Value.split("/")[-1]
-        interfaces = $edgeNode01interfaces
+    $vsanObject = @()
+        $vsanObject += [pscustomobject]@{
+            'vsanName' = "vsan-1"
+            'licenseFile' = $pnpWorkbook.Workbook.Names["vsan_license"].Value
+            'vsanDedup' = $vsanDedup
+            'datastoreName' = $pnpWorkbook.Workbook.Names["mgmt_vsan_datastore"].Value
+        }
+
+    $niocObject = @()
+        $niocObject += [pscustomobject]@{
+            'trafficType' = "VSAN"
+            'value' = "HIGH"
+        }
+        $niocObject += [pscustomobject]@{
+            'trafficType' = "VMOTION"
+            'value' = "LOW"
+        }
+        $niocObject += [pscustomobject]@{
+            'trafficType' = "VDP"
+            'value' = "LOW"
+        }
+        $niocObject += [pscustomobject]@{
+            'trafficType'= "VIRTUALMACHINE"
+            'value'= "HIGH"
+        }
+        $niocObject += [pscustomobject]@{
+            'trafficType'= "MANAGEMENT"
+            'value' = "NORMAL"
+        }
+        $niocObject += [pscustomobject]@{
+            'trafficType' = "NFS"
+            'value' = "LOW"
+        }
+        $niocObject += [pscustomobject]@{
+            'trafficType' = "HBR"
+            'value' = "LOW"
+        }
+        $niocObject += [pscustomobject]@{
+            'trafficType' = "FAULTTOLERANCE"
+            'value' = "LOW"
+        }
+        $niocObject += [pscustomobject]@{
+            'trafficType' = "ISCSI"
+            'value' = "LOW"
+        }
+
+    $dvsObject = @()
+        $dvsObject += [pscustomobject]@{
+            'mtu' = $pnpWorkbook.Workbook.Names["primary_vds_mtu"].Value
+            niocSpecs = $niocObject
+            'dvsName' = $pnpWorkbook.Workbook.Names["primary_vds_name"].Value
+            'vmnics' = $vmnics
+            'networks' = $networks
+        }
+
+    $vmFolderObject = @()
+        $vmFOlderObject += [pscustomobject]@{
+            'MANAGEMENT' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_vm_folder"].Value
+            'NETWORKING' = $pnpWorkbook.Workbook.Names["mgmt_nsx_vm_folder"].Value
+            'EDGENODES' = $pnpWorkbook.Workbook.Names["mgmt_edge_vm_folder"].Value
+        }
+
+    if ($pnpWorkbook.Workbook.Names["mgmt_evc_mode"].Value -eq "n/a") {
+        $evcMode = ""
     }
-    $edgeNodeObject += [pscustomobject]@{
-        'edgeNodeName' = $mgmtWorksheet.Cells['D90'].Value
-        'edgeNodeHostname' = $mgmtWorksheet.Cells['F90'].Value
-        'managementCidr' = $mgmtWorksheet.Cells['H90'].Value+"/"+$mgmtWorksheet.Cells['H10'].Value.split("/")[-1]
-        'edgeVtep1Cidr' = $mgmtWorksheet.Cells['H93'].Value+"/"+$mgmtWorksheet.Cells['H16'].Value.split("/")[-1]
-        'edgeVtep2Cidr' = $mgmtWorksheet.Cells['H94'].Value+"/"+$mgmtWorksheet.Cells['H16'].Value.split("/")[-1]
-        interfaces = $edgeNode02interfaces
+    else {
+        $evcMode = $pnpWorkbook.Workbook.Names["mgmt_evc_mode"].Value
     }
 
-$edgeServicesObject = @()
-    $edgeServicesObject += [pscustomobject]@{
-        'tier0GatewayName' = $mgmtWorksheet.Cells['G135'].Value+"-ec01-t0-gw01"
-        'tier1GatewayName' = $mgmtWorksheet.Cells['G135'].Value+"-ec01-t1-gw01"
+    $resourcePoolObject = @()
+        $resourcePoolObject += [pscustomobject]@{
+            'type' = "management"
+            'name' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_rp"].Value
+            'cpuSharesLevel' = "high"
+            'cpuSharesValue' = "0" -as [int]
+            'cpuLimit' = "-1" -as [int]
+            'cpuReservationExpandable' = $true
+            'cpuReservationPercentage' = "0" -as [int]
+            'memorySharesLevel' = "normal"
+            'memorySharesValue' = "0" -as [int]
+            'memoryLimit' = "-1" -as [int]
+            'memoryReservationExpandable' = $true
+            'memoryReservationPercentage' = "0" -as [int]   
+        }
+        $resourcePoolObject += [pscustomobject]@{
+            'type' = "network"
+            'name' = $pnpWorkbook.Workbook.Names["mgmt_nsx_rp"].Value
+            'cpuSharesLevel' = "high"
+            'cpuSharesValue' = "0" -as [int]
+            'cpuLimit' = "-1" -as [int]
+            'cpuReservationExpandable' = $true
+            'cpuReservationPercentage' = "0" -as [int]
+            'memorySharesLevel' = "normal"
+            'memorySharesValue' = "0" -as [int]
+            'memoryLimit' = "-1" -as [int]
+            'memoryReservationExpandable' = $true
+            'memoryReservationPercentage' = "0" -as [int]  
+        }
+        $resourcePoolObject += [pscustomobject]@{
+            'type' = "compute"
+            'name' = $pnpWorkbook.Workbook.Names["mgmt_user_edge_rp"].Value
+            'cpuSharesLevel' = "normal"
+            'cpuSharesValue' = "0" -as [int]
+            'cpuLimit' = "-1" -as [int]
+            'cpuReservationExpandable' = $true
+            'cpuReservationPercentage' = "0" -as [int]
+            'memorySharesLevel' = "normal"
+            'memorySharesValue' = "0" -as [int]
+            'memoryLimit' = "-1" -as [int]
+            'memoryReservationExpandable' = $true
+            'memoryReservationPercentage' = "0" -as [int]  
+        }
+        $resourcePoolObject += [pscustomobject]@{
+            'type' = "compute"
+            'name' = $pnpWorkbook.Workbook.Names["mgmt_user_vm_rp"].Value
+            'cpuSharesLevel' = "normal"
+            'cpuSharesValue' = "0" -as [int]
+            'cpuLimit' = "-1" -as [int]
+            'cpuReservationExpandable' = $true
+            'cpuReservationPercentage' = "0" -as [int]
+            'memorySharesLevel' = "normal"
+            'memorySharesValue' = "0" -as [int]
+            'memoryLimit' = "-1" -as [int]
+            'memoryReservationExpandable' = $true
+            'memoryReservationPercentage' = "0" -as [int]
+        }
+
+    if ($pnpWorkbook.Workbook.Names["Consolidated_Result"].Value -eq "Excluded") {
+        $clusterObject = @()
+            $clusterObject += [pscustomobject]@{
+                vmFolders = ($vmFolderObject | Select-Object -Skip 0)
+                'clusterName' = $pnpWorkbook.Workbook.Names["mgmt_cluster"].Value
+                'clusterEvcMode' = $evcMode
+            }
+    }
+    else {
+        $clusterObject = @()
+        $clusterObject += [pscustomobject]@{
+            vmFolders = ($vmFolderObject | Select-Object -Skip 0)
+            'clusterName' = $pnpWorkbook.Workbook.Names["mgmt_cluster"].Value
+            'clusterEvcMode' = $evcMode
+            resourcePoolSpecs = $resourcePoolObject
+        }
     }
 
-$bgpNeighboursObject = @()
-    $bgpNeighboursObject += [pscustomobject]@{
-        'neighbourIp' = $mgmtWorksheet.Cells['D25'].Value
-        'autonomousSystem' = $mgmtWorksheet.Cells['D26'].Value
-        'password' = $mgmtWorksheet.Cells['D27'].Value
+    $ssoObject = @()
+        $ssoObject += [pscustomobject]@{
+            'ssoSiteName' = $pnpWorkbook.Workbook.Names["mgmt_sddc_domain"].Value
+            'ssoDomainPassword' = $defaultPassword
+            'ssoDomain' = "vsphere.local"
+            'isJoinSsoDomain' = $false
+        }
+
+    $pscObject = @()
+        $pscObject += [pscustomobject]@{
+            'pscId' = "psc-1"
+            'vcenterId' = "vcenter-1"
+            pscSsoSpec =  ($ssoObject | Select-Object -Skip 0)
+            'adminUserSsoPassword' = $defaultPassword
+        }
+
+    $vcenterObject = @()
+        $vcenterObject += [pscustomobject]@{
+            'vcenterIp' = $pnpWorkbook.Workbook.Names["mgmt_vc_ip"].Value
+            'vcenterHostname' = $pnpWorkbook.Workbook.Names["mgmt_vc_hostname"].Value
+            'vcenterId' = "vcenter-1"
+            'licenseFile' = $pnpWorkbook.Workbook.Names["vc_license"].Value
+            'rootVcenterPassword' = $defaultPassword
+            'vmSize' = $pnpWorkbook.Workbook.Names["mgmt_vc_size"].Value
+        }
+
+    $hostCredentialsObject = @()
+        $hostCredentialsObject += [pscustomobject]@{
+            'username' = "root"
+            'password' = $defaultPassword
+        }
+
+    $ipAddressPrivate01Object = @()
+        $ipAddressPrivate01Object += [pscustomobject]@{
+            'subnet' = $managmentMask
+            'cidr' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_cidr"].Value
+            'ipAddress' = $pnpWorkbook.Workbook.Names["mgmt_host1_ip"].Value
+            'gateway' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_gateway"].Value
+        }
+
+    $ipAddressPrivate02Object = @()
+        $ipAddressPrivate02Object += [pscustomobject]@{
+            'subnet' = $managmentMask
+            'cidr' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_cidr"].Value
+            'ipAddress' = $pnpWorkbook.Workbook.Names["mgmt_host2_ip"].Value
+            'gateway' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_gateway"].Value
+        }
+
+    $ipAddressPrivate03Object = @()
+        $ipAddressPrivate03Object += [pscustomobject]@{
+            'subnet' = $managmentMask
+            'cidr' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_cidr"].Value
+            'ipAddress' = $pnpWorkbook.Workbook.Names["mgmt_host3_ip"].Value
+            'gateway' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_gateway"].Value
+        }
+
+    $ipAddressPrivate04Object = @()
+        $ipAddressPrivate04Object += [pscustomobject]@{
+            'subnet' = $managmentMask
+            'cidr' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_cidr"].Value
+            'ipAddress' = $pnpWorkbook.Workbook.Names["mgmt_host4_ip"].Value
+            'gateway' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_gateway"].Value
+        }
+
+    $HostObject = @()
+        $HostObject += [pscustomobject]@{
+            'hostname' = $pnpWorkbook.Workbook.Names["mgmt_host1_hostname"].Value
+            'vSwitch' = $pnpWorkbook.Workbook.Names["mgmt_vss_switch"].Value
+            'serverId' = "host-0"
+            'association' = $pnpWorkbook.Workbook.Names["mgmt_datacenter"].Value
+            credentials = ($hostCredentialsObject | Select-Object -Skip 0)
+            ipAddressPrivate = ($ipAddressPrivate01Object | Select-Object -Skip 0)
+        }
+        $HostObject += [pscustomobject]@{
+            'hostname' = $pnpWorkbook.Workbook.Names["mgmt_host2_hostname"].Value
+            'vSwitch' = $pnpWorkbook.Workbook.Names["mgmt_vss_switch"].Value
+            'serverId' = "host-1"
+            'association' = $pnpWorkbook.Workbook.Names["mgmt_datacenter"].Value
+            credentials = ($hostCredentialsObject | Select-Object -Skip 0)
+            ipAddressPrivate = ($ipAddressPrivate02Object | Select-Object -Skip 0)
+        }
+        $HostObject += [pscustomobject]@{
+            'hostname' = $pnpWorkbook.Workbook.Names["mgmt_host3_hostname"].Value
+            'vSwitch' = $pnpWorkbook.Workbook.Names["mgmt_vss_switch"].Value
+            'serverId' = "host-2"
+            'association' = $pnpWorkbook.Workbook.Names["mgmt_datacenter"].Value
+            credentials = ($hostCredentialsObject | Select-Object -Skip 0)
+            ipAddressPrivate = ($ipAddressPrivate03Object | Select-Object -Skip 0)
+        }
+        $HostObject += [pscustomobject]@{
+            'hostname' = $pnpWorkbook.Workbook.Names["mgmt_host4_hostname"].Value
+            'vSwitch' = $pnpWorkbook.Workbook.Names["mgmt_vss_switch"].Value
+            'serverId' = "host-3"
+            'association' = $pnpWorkbook.Workbook.Names["mgmt_datacenter"].Value
+            credentials = ($hostCredentialsObject | Select-Object -Skip 0)
+            ipAddressPrivate = ($ipAddressPrivate04Object | Select-Object -Skip 0)
+        }
+
+    $excluded = New-Object System.Collections.ArrayList
+    [Array]$excluded = "NSX-V"
+
+    $ceipState = $pnpWorkbook.Workbook.Names["mgmt_ceip_status"].Value
+    if ($ceipState -eq "Enabled") {
+        $ceipEnabled = "$true"
     }
-    $bgpNeighboursObject += [pscustomobject]@{
-        'neighbourIp' = $mgmtWorksheet.Cells['D28'].Value
-        'autonomousSystem' = $mgmtWorksheet.Cells['D29'].Value
-        'password' = $mgmtWorksheet.Cells['D30'].Value
+    else {
+        $ceipEnabled = "$false"
     }
 
-$nsxtEdgeObject = @()
-    $nsxtEdgeObject += [pscustomobject]@{
-        'edgeClusterName' = $mgmtWorksheet.Cells['G144'].Value
-        'edgeRootPassword' = $nsxtPassword
-        'edgeAdminPassword' = $nsxtPassword
-        'edgeAuditPassword' = $nsxtPassword
-        'edgeFormFactor' = $mgmtWorksheet.Cells['G145'].Value
-        'tier0ServicesHighAvailability' = "ACTIVE-ACTIVE"
-        'asn' = $mgmtWorksheet.Cells['D24'].Value
-        edgeServicesSpecs = ($edgeServicesObject | Select-Object -Skip 0)
-        edgeNodeSpecs = $edgeNodeObject
-        bgpNeighbours = $bgpNeighboursObject
-    }
-
-$logicalSegmentsObject = @()
-    $logicalSegmentsObject += [pscustomobject]@{
-        'name' = $mgmtWorksheet.Cells['F19'].Value
-		'networkType' = "REGION_SPECIFIC"
-    }
-    $logicalSegmentsObject += [pscustomobject]@{
-        'name' = $mgmtWorksheet.Cells['F20'].Value
-		'networkType' = "X_REGION"
-    }
-
-$nsxtObject = @()
-    $nsxtObject += [pscustomobject]@{
-        'nsxtManagerSize' = $mgmtWorksheet.Cells['G145'].Value
-        nsxtManagers = $nsxtManagerObject
-        'rootNsxtManagerPassword' = $nsxtPassword
-        'nsxtAdminPassword' = $nsxtPassword
-        'nsxtAuditPassword' = $nsxtPassword
-        'rootLoginEnabledForNsxtManager' = "true"
-        'sshEnabledForNsxtManager' = "true"
-        overLayTransportZone = ($overlayTransportZoneObject | Select-Object -Skip 0)
-        vlanTransportZone = ($vlanTransportZoneObject | Select-Object -Skip 0)
-        'vip' = $mgmtWorksheet.Cells['H81'].Value
-		'vipFqdn' = $mgmtWorksheet.Cells['F81'].Value
-		'nsxtLicense' = $mgmtWorksheet.Cells['C130'].Value
-		'transportVlanId' = $mgmtWorksheet.Cells['D13'].Value
-        nsxtEdgeSpec = ($nsxtEdgeObject | Select-Object -Skip 0)
-        logicalSegments = $logicalSegmentsObject
-    }
-
-$excelvsanDedup = $mgmtWorksheet.Cells['C147'].Value
-if ($excelvsanDedup -eq "No") {
-    $vsanDedup = $false
-}
-elseif ($excelvsanDedup -eq "Yes") {
-    $vsanDedup = $true
-}
-
-$vsanObject = @()
-    $vsanObject += [pscustomobject]@{
-        'vsanName' = "vsan-1"
-        'licenseFile' = $mgmtWorksheet.Cells['C129'].Value
-        'vsanDedup' = $vsanDedup
-		'datastoreName' = $mgmtWorksheet.Cells['G146'].Value
-    }
-
-$niocObject = @()
-    $niocObject += [pscustomobject]@{
-        'trafficType' = "VSAN"
-		'value' = "HIGH"
-	}
-    $niocObject += [pscustomobject]@{
-	    'trafficType' = "VMOTION"
-		'value' = "LOW"
-	}
-    $niocObject += [pscustomobject]@{
-	    'trafficType' = "VDP"
-		'value' = "LOW"
-    }
-    $niocObject += [pscustomobject]@{
-        'trafficType'= "VIRTUALMACHINE"
-	    'value'= "HIGH"
-	}
-    $niocObject += [pscustomobject]@{
-        'trafficType'= "MANAGEMENT"
-		'value' = "NORMAL"
-	}
-    $niocObject += [pscustomobject]@{
-        'trafficType' = "NFS"
-	    'value' = "LOW"
-	}
-    $niocObject += [pscustomobject]@{
-	    'trafficType' = "HBR"
-		'value' = "LOW"
-    }
-    $niocObject += [pscustomobject]@{
-	    'trafficType' = "FAULTTOLERANCE"
-	    'value' = "LOW"
-	}
-    $niocObject += [pscustomobject]@{
-	    'trafficType' = "ISCSI"
-	    'value' = "LOW"
-	}
-
-$dvsObject = @()
-    $dvsObject += [pscustomobject]@{
-        'mtu' = $mgmtWorksheet.Cells['G142'].Value
-        niocSpecs = $niocObject
-        'dvsName' = $mgmtWorksheet.Cells['G141'].Value
-        'vmnics' = $vmnics
-        'networks' = $networks
-    }
-
-$vmFolderObject = @()
-    $vmFOlderObject += [pscustomobject]@{
-        'MANAGEMENT' = $mgmtWorksheet.Cells['G164'].Value
-        'NETWORKING' = $mgmtWorksheet.Cells['G165'].Value
-        'EDGENODES' = $mgmtWorksheet.Cells['G165'].Value
-    }
-
-$excelEvcMode = $mgmtWorksheet.Cells['G150'].Value
-if ($excelEvcMode -eq "n/a") {
-    $evcMode = ""
-}
-else {
-    $evcMode = $mgmtWorksheet.Cells['G150'].Value
-}
-
-$resourcePoolObject = @()
-    $resourcePoolObject += [pscustomobject]@{
-        'type' = "management"
-        'name' = $mgmtWorksheet.Cells['G151'].Value
-        'cpuSharesLevel' = "high"
-        'cpuSharesValue' = "0" -as [int]
-        'cpuLimit' = "-1" -as [int]
-        'cpuReservationExpandable' = $true
-        'cpuReservationPercentage' = "0" -as [int]
-        'memorySharesLevel' = "normal"
-        'memorySharesValue' = "0" -as [int]
-        'memoryLimit' = "-1" -as [int]
-        'memoryReservationExpandable' = $true
-        'memoryReservationPercentage' = "0" -as [int]   
-    }
-    $resourcePoolObject += [pscustomobject]@{
-        'type' = "network"
-        'name' = $mgmtWorksheet.Cells['G152'].Value
-        'cpuSharesLevel' = "high"
-        'cpuSharesValue' = "0" -as [int]
-        'cpuLimit' = "-1" -as [int]
-        'cpuReservationExpandable' = $true
-        'cpuReservationPercentage' = "0" -as [int]
-        'memorySharesLevel' = "normal"
-        'memorySharesValue' = "0" -as [int]
-        'memoryLimit' = "-1" -as [int]
-        'memoryReservationExpandable' = $true
-        'memoryReservationPercentage' = "0" -as [int]  
-    }
-    $resourcePoolObject += [pscustomobject]@{
-        'type' = "compute"
-        'name' = $mgmtWorksheet.Cells['G153'].Value
-        'cpuSharesLevel' = "normal"
-        'cpuSharesValue' = "0" -as [int]
-        'cpuLimit' = "-1" -as [int]
-        'cpuReservationExpandable' = $true
-        'cpuReservationPercentage' = "0" -as [int]
-        'memorySharesLevel' = "normal"
-        'memorySharesValue' = "0" -as [int]
-        'memoryLimit' = "-1" -as [int]
-        'memoryReservationExpandable' = $true
-        'memoryReservationPercentage' = "0" -as [int]  
-    }
-    $resourcePoolObject += [pscustomobject]@{
-        'type' = "compute"
-        'name' = $mgmtWorksheet.Cells['G154'].Value
-        'cpuSharesLevel' = "normal"
-        'cpuSharesValue' = "0" -as [int]
-        'cpuLimit' = "-1" -as [int]
-        'cpuReservationExpandable' = $true
-        'cpuReservationPercentage' = "0" -as [int]
-        'memorySharesLevel' = "normal"
-        'memorySharesValue' = "0" -as [int]
-        'memoryLimit' = "-1" -as [int]
-        'memoryReservationExpandable' = $true
-        'memoryReservationPercentage' = "0" -as [int]
-    }
-
-$clusterObject = @()
-    $clusterObject += [pscustomobject]@{
-        vmFolders = ($vmFolderObject | Select-Object -Skip 0)
-        'clusterName' = $mgmtWorksheet.Cells['G149'].Value
-        'clusterEvcMode' = $evcMode
-        resourcePoolSpecs = $resourcePoolObject
-    }
-
-$ssoObject = @()
-    $ssoObject += [pscustomobject]@{
-        'ssoSiteName' = $mgmtWorksheet.Cells['G135'].Value
-        'ssoDomainPassword' = $defaultPassword
-		'ssoDomain' = "vsphere.local"
-		'isJoinSsoDomain' = $false
-    }
-
-$pscObject = @()
-    $pscObject += [pscustomobject]@{
-        'pscId' = "psc-1"
-		'vcenterId' = "vcenter-1"
-		pscSsoSpec =  ($ssoObject | Select-Object -Skip 0)
-		'adminUserSsoPassword' = $defaultPassword
-    }
-
-$vcenterObject = @()
-    $vcenterObject += [pscustomobject]@{
-        'vcenterIp' = $mgmtWorksheet.Cells['H76'].Value
-		'vcenterHostname' = $mgmtWorksheet.Cells['D76'].Value
-		'vcenterId' = "vcenter-1"
-		'licenseFile' = $mgmtWorksheet.Cells['C127'].Value
-		'rootVcenterPassword' = $defaultPassword
-		'vmSize' = $mgmtWorksheet.Cells['G136'].Value
-    }
-
-$hostCredentialsObject = @()
-    $hostCredentialsObject += [pscustomobject]@{
-        'username' = "root"
-		'password' = $defaultPassword
-    }
-
-$ipAddressPrivate01Object = @()
-    $ipAddressPrivate01Object += [pscustomobject]@{
-        'subnet' = $managmentMask
-	    'cidr' = $mgmtWorksheet.Cells['H10'].Value
-		'ipAddress' = $mgmtWorksheet.Cells['H77'].Value
-		'gateway' = $mgmtWorksheet.Cells['J10'].Value
-    }
-
-$ipAddressPrivate02Object = @()
-    $ipAddressPrivate02Object += [pscustomobject]@{
-        'subnet' = $managmentMask
-	    'cidr' = $mgmtWorksheet.Cells['H10'].Value
-		'ipAddress' = $mgmtWorksheet.Cells['H78'].Value
-		'gateway' = $mgmtWorksheet.Cells['J10'].Value
-    }
-
-$ipAddressPrivate03Object = @()
-    $ipAddressPrivate03Object += [pscustomobject]@{
-        'subnet' = $managmentMask
-	    'cidr' = $mgmtWorksheet.Cells['H10'].Value
-		'ipAddress' = $mgmtWorksheet.Cells['H79'].Value
-		'gateway' = $mgmtWorksheet.Cells['J10'].Value
-    }
-
-$ipAddressPrivate04Object = @()
-    $ipAddressPrivate04Object += [pscustomobject]@{
-        'subnet' = $managmentMask
-	    'cidr' = $mgmtWorksheet.Cells['H10'].Value
-		'ipAddress' = $mgmtWorksheet.Cells['H80'].Value
-		'gateway' = $mgmtWorksheet.Cells['J10'].Value
-    }
-
-$HostObject = @()
-    $HostObject += [pscustomobject]@{
-        'hostname' = $mgmtWorksheet.Cells['D77'].Value
-		'vSwitch' = $mgmtWorksheet.Cells['G138'].Value
-		'serverId' = "host-0"
-		'association' = $mgmtWorksheet.Cells['G148'].Value
-        credentials = ($hostCredentialsObject | Select-Object -Skip 0)
-        ipAddressPrivate = ($ipAddressPrivate01Object | Select-Object -Skip 0)
-    }
-    $HostObject += [pscustomobject]@{
-        'hostname' = $mgmtWorksheet.Cells['D78'].Value
-		'vSwitch' = $mgmtWorksheet.Cells['G138'].Value
-		'serverId' = "host-1"
-		'association' = $mgmtWorksheet.Cells['G148'].Value
-        credentials = ($hostCredentialsObject | Select-Object -Skip 0)
-        ipAddressPrivate = ($ipAddressPrivate02Object | Select-Object -Skip 0)
-    }
-    $HostObject += [pscustomobject]@{
-        'hostname' = $mgmtWorksheet.Cells['D79'].Value
-		'vSwitch' = $mgmtWorksheet.Cells['G138'].Value
-		'serverId' = "host-2"
-		'association' = $mgmtWorksheet.Cells['G148'].Value
-        credentials = ($hostCredentialsObject | Select-Object -Skip 0)
-        ipAddressPrivate = ($ipAddressPrivate03Object | Select-Object -Skip 0)
-    }
-    $HostObject += [pscustomobject]@{
-        'hostname' = $mgmtWorksheet.Cells['D80'].Value
-		'vSwitch' = $mgmtWorksheet.Cells['G138'].Value
-		'serverId' = "host-3"
-		'association' = $mgmtWorksheet.Cells['G148'].Value
-        credentials = ($hostCredentialsObject | Select-Object -Skip 0)
-        ipAddressPrivate = ($ipAddressPrivate04Object | Select-Object -Skip 0)
-    }
-
-$excluded = New-Object System.Collections.ArrayList
-[Array]$excluded = "NSX-V"
-
-$managementDomainObject = @()
-    $managementDomainObject += [pscustomobject]@{
-        'taskName' = "workflowconfig/workflowspec-ems.json"
-        'sddcId' = $mgmtWorksheet.Cells['G135'].Value
-        'ceipEnabled' = $true
-        'managementPoolName' = $mgmtWorksheet.Cells['G134'].Value
-	    'dvSwitchVersion' = "7.0.0"
-	    'skipEsxThumbprintValidation' = $true
-	    'esxLicense' = $mgmtWorksheet.Cells['C128'].Value
-        'excludedComponents' = $excluded
-	    ntpServers = $ntpServers
-        dnsSpec = ($dnsObject | Select-Object -Skip 0)
-        sddcManagerSpec = ($sddcManagerObject | Select-Object -Skip 0)
-        networkSpecs = $networkObject
-        nsxtSpec = ($nsxtObject | Select-Object -Skip 0)
-        vsanSpec = ($vsanObject | Select-Object -Skip 0)
-        dvsSpecs = $dvsObject
-        clusterSpec = ($clusterObject | Select-Object -Skip 0)
-        pscSpecs = $pscObject
-        vcenterSpec = ($vcenterObject | Select-Object -Skip 0)
-        hostSpecs = $hostObject
-    }
+    $managementDomainObject = @()
+        $managementDomainObject += [pscustomobject]@{
+            'taskName' = "workflowconfig/workflowspec-ems.json"
+            'sddcId' = $pnpWorkbook.Workbook.Names["mgmt_sddc_domain"].Value
+            'ceipEnabled' = $ceipEnabled
+            'managementPoolName' = $pnpWorkbook.Workbook.Names["mgmt_pool_name"].Value
+            'dvSwitchVersion' = "7.0.0"
+            'skipEsxThumbprintValidation' = $true
+            'esxLicense' = $pnpWorkbook.Workbook.Names["esx_license_std"].Value
+            'excludedComponents' = $excluded
+            ntpServers = $ntpServers
+            dnsSpec = ($dnsObject | Select-Object -Skip 0)
+            sddcManagerSpec = ($sddcManagerObject | Select-Object -Skip 0)
+            networkSpecs = $networkObject
+            nsxtSpec = ($nsxtObject | Select-Object -Skip 0)
+            vsanSpec = ($vsanObject | Select-Object -Skip 0)
+            dvsSpecs = $dvsObject
+            clusterSpec = ($clusterObject | Select-Object -Skip 0)
+            pscSpecs = $pscObject
+            vcenterSpec = ($vcenterObject | Select-Object -Skip 0)
+            hostSpecs = $hostObject
+        }
 
 LogMessage " Exporting the $module to $Json"
 
 $managementDomainObject | ConvertTo-Json -Depth 12 | Out-File -FilePath $Json
 LogMessage " Closing the Excel Workbook: $workbook"
-Close-ExcelPackage $pnpWorkbook
+Close-ExcelPackage $pnpWorkbook -ErrorAction SilentlyContinue
 LogMessage " Completed the Process of Generating the $module" Yellow
