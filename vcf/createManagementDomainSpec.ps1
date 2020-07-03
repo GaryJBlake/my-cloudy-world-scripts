@@ -2,10 +2,10 @@
     .NOTES
     ===============================================================================================================
     .Created By:    Gary Blake
-    .Group:         HCI BU
+    .Group:         CPBU
     .Organization:  VMware, Inc.
-    .Version:       1.0 (Build 001)
-    .Date:          2020-06-015
+    .Version:       2.0 (Build 001)
+    .Date:          2020-07-03
     ===============================================================================================================
     .CREDITS
 
@@ -17,6 +17,8 @@
 
     - 1.0.000 (Gary Blake / 2020-06-02) - Initial script creation
     - 1.0.001 (Gary Blake / 2020-06-15) - Minor fixes
+    - 2.0.001 (Gary Blake / 2020-07-03) - Updated for VCF 4.0.1 where Named Cells in the Planning and Preparation
+                                          Workbook are now available
 
     ===============================================================================================================
     .DESCRIPTION
@@ -27,7 +29,7 @@
 
     .EXAMPLE
 
-    .\createManagementDomainSpec.ps1 -workbook E:\pnpWorkbook.xlsx -json E:\MyLab\sfo\sfo-managementDomain.json -DefaultPassword VMw@re1! -nsxtPassword VMw@re1!
+    .\createManagementDomainSpec.ps1 -workbook F:\pnpWorkbook.xlsx -json F:\MyLab\sfo\sfo-managementDomain.json -DefaultPassword VMw@re1! -nsxtPassword VMw@re1!
 #>
  
  Param(
