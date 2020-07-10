@@ -2,10 +2,10 @@
     .NOTES
     ===============================================================================================================
     .Created By:    Gary Blake
-    .Group:         HCI BU
+    .Group:         CPBU
     .Organization:  VMware, Inc.
-    .Version:       1.0 (Build 001)
-    .Date:          2020-06-15
+    .Version:       2.0 (Build 001)
+    .Date:          2020-07-10
     ===============================================================================================================
     .CREDITS
 
@@ -17,6 +17,8 @@
 
     - 1.0.000 (Gary Blake / 2020-05-29) - Initial script creation
     - 1.0.001 (Gary Blake / 2020-06-15) - Minor fixes
+    - 2.0.001 (Gary Blake / 2020-07-10) - Updated for VCF 4.0.1 where Named Cells in the Planning and Preparation
+                                          Workbook are now available
 
     ===============================================================================================================
     .DESCRIPTION
@@ -107,7 +109,7 @@ Function cidrToMask ($cidr) {
 
 Try {
     LogMessage " Importing ImportExcel Module"
-    Import-Module ImportExcel
+    Import-Module ImportExcel -WarningAction SilentlyContinue -ErrorAction Stop
 }
 Catch {
     LogMessage " ImportExcel Module not found. Installing"
@@ -119,64 +121,62 @@ LogMessage " Opening the Excel Workbook: $Workbook"
 $pnpWorkbook = Open-ExcelPackage -Path $Workbook
 
 LogMessage " Checking Valid Planning and Prepatation Workbook Provided"
-$optionsWorksheet = $pnpWorkbook.Workbook.Worksheets["Deployment Options"]
-if ($optionsWorksheet.Cells['J8'].Value -ne "v4.0.0") {
+if ($pnpWorkbook.Workbook.Names["vcf_version"].Value -ne "v4.0.1") {
     LogMessage " Planning and Prepatation Workbook Provided Not Supported" Red 
     Break
 }
 
 LogMessage " Extracting Worksheet Data from the Excel Workbook"
-$wldWorksheet = $pnpWorkbook.Workbook.Worksheets["Workload Domain"]
-
 LogMessage " Generating the $module"
-$cidr = $wldWorksheet.Cells['H12'].Value.split("/")
+
+$cidr = $pnpWorkbook.Workbook.Names["wld_vsan_cidr"].Value.split("/")
 $vsanMask = cidrToMask $cidr[1]
 $vsanSubnet = $cidr[0]
 
-$cidr = $wldWorksheet.Cells['H11'].Value.split("/")
+$cidr = $pnpWorkbook.Workbook.Names["wld_vmotion_cidr"].Value.split("/")
 $vmotionMask = cidrToMask $cidr[1]
 $vmotionSubnet = $cidr[0]
 
 $vmotionIpPoolObject = @()
     $vmotionIpPoolObject += [pscustomobject]@{
-        'start' = $wldWorksheet.Cells['H99'].Value;
-        'end' = $wldWorksheet.Cells['H100'].Value
+        'start' = $pnpWorkbook.Workbook.Names["wld_vmotion_pool_start"].Value;
+        'end' = $pnpWorkbook.Workbook.Names["wld_vmotion_pool_end"].Value
     }
 
 $vsanIpPoolObject = @()
     $vsanIpPoolObject += [pscustomobject]@{
-        'start' = $wldWorksheet.Cells['H101'].Value;
-        'end' = $wldWorksheet.Cells['H102'].Value
+        'start' = $pnpWorkbook.Workbook.Names["wld_vsan_pool_start"].Value;
+        'end' = $pnpWorkbook.Workbook.Names["wld_vsan_pool_end"].Value
     }
 
 $networkObject = @()
     $networkObject += [pscustomobject]@{
         'type' = "VMOTION"
-        'vlanId' = $wldWorksheet.Cells['D11'].Value
-        'mtu' = $wldWorksheet.Cells['L11'].Value
+        'vlanId' = $pnpWorkbook.Workbook.Names["wld_vmotion_vlan"].Value
+        'mtu' = $pnpWorkbook.Workbook.Names["wld_vmotion_mtu"].Value
         'subnet' = $vmotionSubnet
         'mask' = $vmotionMask
-        'gateway' = $wldWorksheet.Cells['J11'].Value
+        'gateway' = $pnpWorkbook.Workbook.Names["wld_vmotion_gateway"].Value
         ipPools = $vmotionIpPoolObject
     }
     $networkObject += [pscustomobject]@{
         'type' = "VSAN"
-        'vlanId' = $wldWorksheet.Cells['D12'].Value
-        'mtu' = $wldWorksheet.Cells['L12'].Value
+        'vlanId' = $pnpWorkbook.Workbook.Names["wld_vsan_vlan"].Value
+        'mtu' = $pnpWorkbook.Workbook.Names["wld_vsan_mtu"].Value
         'subnet' = $vsanSubnet
         'mask' = $vsanMask
-        'gateway' = $wldWorksheet.Cells['J12'].Value
+        'gateway' = $pnpWorkbook.Workbook.Names["wld_vsan_gateway"].Value
         ipPools = $vsanIpPoolObject
     }
 
 $networkPoolObject = @()
     $networkPoolObject += [pscustomobject]@{
-        'name' = $wldWorksheet.Cells['D99'].Value
+        'name' = $pnpWorkbook.Workbook.Names["wld_pool_name"].Value
         networks = $networkObject
     }
 
 LogMessage " Exporting the $module to $json"
 $networkPoolObject | ConvertTo-Json -Depth 4 | Out-File -FilePath $Json
 LogMessage " Closing the Excel Workbook: $workbook"
-Close-ExcelPackage $pnpWorkbook
+Close-ExcelPackage $pnpWorkbook -ErrorAction SilentlyContinue
 LogMessage " Completed the Process of Generating the $module" Yellow

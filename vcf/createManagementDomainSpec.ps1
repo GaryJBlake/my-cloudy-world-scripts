@@ -29,7 +29,7 @@
 
     .EXAMPLE
 
-    .\createManagementDomainSpec.ps1 -workbook F:\pnpWorkbook.xlsx -json F:\MyLab\sfo\sfo-managementDomain.json -DefaultPassword VMw@re1! -nsxtPassword VMw@re1!
+    .\createManagementDomainSpec.ps1 -workbook F:\pnpWorkbook.xlsx -json F:\MyLab\sfo\sfo-managementDomain.json -DefaultPassword VMw@re1! -nsxtPassword VMw@re1!VMw@re1!
 #>
  
  Param(
@@ -113,7 +113,7 @@ Function cidrToMask ($cidr) {
 
 Try {
     LogMessage " Importing ImportExcel Module"
-    Import-Module ImportExcel
+    Import-Module ImportExcel -WarningAction SilentlyContinue -ErrorAction Stop
 }
 Catch {
     LogMessage " ImportExcel Module not found. Installing"

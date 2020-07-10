@@ -2,10 +2,10 @@
     .NOTES
     ===============================================================================================================
     .Created By:    Gary Blake
-    .Group:         HCI BU
+    .Group:         CPBU
     .Organization:  VMware, Inc.
-    .Version:       1.0 (Build 001)
-    .Date:          2020-06-15
+    .Version:       2.0 (Build 001)
+    .Date:          2020-07-10
     ===============================================================================================================
     .CREDITS
 
@@ -17,6 +17,8 @@
 
     - 1.0.000 (Gary Blake / 2020-06-01) - Initial script creation
     - 1.0.001 (Gary Blake / 2020-06-15) - Minor fixes
+    - 2.0.001 (Gary Blake / 2020-07-10) - Updated for VCF 4.0.1 where Named Cells in the Planning and Preparation
+                                          Workbook are now available
 
     ===============================================================================================================
     .DESCRIPTION
@@ -27,8 +29,7 @@
 
     .EXAMPLE
 
-    .\createWorkloadEdgeSpec.ps1 -Workbook E:\pnpWorkbook.xlsx -Json E:\MyLab\sfo\sfo-workloadEdge.json -nsxtPassword 
-    VMw@re1!VMw@re1! -bgpPassword VMw@re1!
+    .\createWorkloadEdgeSpec.ps1 -Workbook E:\pnpWorkbook.xlsx -Json E:\MyLab\sfo\sfo-workloadEdge.json -nsxtPassword VMw@re1!VMw@re1!
 #>
  
  Param(
@@ -70,7 +71,7 @@ Function LogMessage {
 
 Try {
     LogMessage " Importing ImportExcel Module"
-    Import-Module ImportExcel
+    Import-Module ImportExcel -WarningAction SilentlyContinue -ErrorAction Stop
 }
 Catch {
     LogMessage " ImportExcel Module not found. Installing"
@@ -82,108 +83,104 @@ LogMessage " Opening the Excel Workbook: $Workbook"
 $pnpWorkbook = Open-ExcelPackage -Path $Workbook
 
 LogMessage " Checking Valid Planning and Prepatation Workbook Provided"
-$optionsWorksheet = $pnpWorkbook.Workbook.Worksheets["Deployment Options"]
-if ($optionsWorksheet.Cells['J8'].Value -ne "v4.0.0") {
+if ($pnpWorkbook.Workbook.Names["vcf_version"].Value -ne "v4.0.1") {
     LogMessage " Planning and Prepatation Workbook Provided Not Supported" Red 
     Break
 }
 
 LogMessage " Extracting Worksheet Data from the Excel Workbook"
-$wldWorksheet = $pnpWorkbook.Workbook.Worksheets["Workload Domain"]
-$mgmtWorksheet = $pnpWorkbook.Workbook.Worksheets["Management Domain"]
-
 LogMessage " Generating the $module"
 
 $uplink01NetworkObject = @()
-    $uplink01NetworkObject += [pscustomobject]@{
-        'uplinkVlan' = $wldWorksheet.Cells['D14'].Value -as [int]
-        'uplinkInterfaceIP' = $wldWorksheet.Cells['H87'].Value+"/"+$wldWorksheet.Cells['H14'].Value.split("/")[-1]
-        'peerIP' = $wldWorksheet.Cells['D24'].Value+"/"+$wldWorksheet.Cells['H14'].Value.split("/")[-1]
-        'asnPeer' = $wldWorksheet.Cells['D25'].Value -as [int]
-        'bgpPeerPassword' = $wldWorksheet.Cells['D26'].Value
-    }
 $uplink01NetworkObject += [pscustomobject]@{
-        'uplinkVlan' = $wldWorksheet.Cells['D15'].Value -as [int]
-        'uplinkInterfaceIP' = $wldWorksheet.Cells['H88'].Value+"/"+$wldWorksheet.Cells['H15'].Value.split("/")[-1]
-        'peerIP' = $wldWorksheet.Cells['D27'].Value+"/"+$wldWorksheet.Cells['H15'].Value.split("/")[-1]
-        'asnPeer' = $wldWorksheet.Cells['D28'].Value -as [int]
-        'bgpPeerPassword' = $wldWorksheet.Cells['D29'].Value
-    }
+    'uplinkVlan' = $pnpWorkbook.Workbook.Names["wld_uplink1_vlan"].Value -as [int]
+    'uplinkInterfaceIP' = $pnpWorkbook.Workbook.Names["wld_en1_uplink1_interface_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_uplink1_cidr"].Value.split("/")[-1]
+    'peerIP' = $pnpWorkbook.Workbook.Names["wld_tor1_peer_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_uplink1_cidr"].Value.split("/")[-1]
+    'asnPeer' = $pnpWorkbook.Workbook.Names["wld_tor1_peer_asn"].Value -as [int]
+    'bgpPeerPassword' = $pnpWorkbook.Workbook.Names["wld_tor1_peer_bgp_password"].Value
+}
+$uplink01NetworkObject += [pscustomobject]@{
+    'uplinkVlan' = $pnpWorkbook.Workbook.Names["wld_uplink2_vlan"].Value -as [int]
+    'uplinkInterfaceIP' = $pnpWorkbook.Workbook.Names["wld_en1_uplink2_interface_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_uplink2_cidr"].Value.split("/")[-1]
+    'peerIP' = $pnpWorkbook.Workbook.Names["wld_tor2_peer_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_uplink2_cidr"].Value.split("/")[-1]
+    'asnPeer' = $pnpWorkbook.Workbook.Names["wld_tor2_peer_asn"].Value -as [int]
+    'bgpPeerPassword' = $pnpWorkbook.Workbook.Names["wld_tor2_peer_bgp_password"].Value
+}
 
 $uplink02NetworkObject = @()
-    $uplink02NetworkObject += [pscustomobject]@{
-        'uplinkVlan' = $wldWorksheet.Cells['D14'].Value -as [int]
-        'uplinkInterfaceIP' = $wldWorksheet.Cells['H92'].Value+"/"+$wldWorksheet.Cells['H14'].Value.split("/")[-1]
-        'peerIP' = $wldWorksheet.Cells['D24'].Value+"/"+$wldWorksheet.Cells['H14'].Value.split("/")[-1]
-        'asnPeer' = $wldWorksheet.Cells['D25'].Value -as [int]
-        'bgpPeerPassword' = $wldWorksheet.Cells['D26'].Value
-    }
 $uplink02NetworkObject += [pscustomobject]@{
-        'uplinkVlan' = $wldWorksheet.Cells['D15'].Value -as [int]
-        'uplinkInterfaceIP' = $wldWorksheet.Cells['H93'].Value+"/"+$wldWorksheet.Cells['H15'].Value.split("/")[-1]
-        'peerIP' = $wldWorksheet.Cells['D27'].Value+"/"+$wldWorksheet.Cells['H15'].Value.split("/")[-1]
-        'asnPeer' = $wldWorksheet.Cells['D28'].Value -as [int]
-        'bgpPeerPassword' = $wldWorksheet.Cells['D29'].Value
-    }
+    'uplinkVlan' = $pnpWorkbook.Workbook.Names["wld_uplink1_vlan"].Value -as [int]
+    'uplinkInterfaceIP' = $pnpWorkbook.Workbook.Names["wld_en2_uplink1_interface_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_uplink1_cidr"].Value.split("/")[-1]
+    'peerIP' = $pnpWorkbook.Workbook.Names["wld_tor1_peer_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_uplink1_cidr"].Value.split("/")[-1]
+    'asnPeer' = $pnpWorkbook.Workbook.Names["wld_tor1_peer_asn"].Value -as [int]
+    'bgpPeerPassword' = $pnpWorkbook.Workbook.Names["wld_tor1_peer_bgp_password"].Value
+}
+$uplink02NetworkObject += [pscustomobject]@{
+    'uplinkVlan' = $pnpWorkbook.Workbook.Names["wld_uplink2_vlan"].Value -as [int]
+    'uplinkInterfaceIP' = $pnpWorkbook.Workbook.Names["wld_en2_uplink2_interface_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_uplink2_cidr"].Value.split("/")[-1]
+    'peerIP' = $pnpWorkbook.Workbook.Names["wld_tor2_peer_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_uplink2_cidr"].Value.split("/")[-1]
+    'asnPeer' = $pnpWorkbook.Workbook.Names["wld_tor2_peer_asn"].Value -as [int]
+    'bgpPeerPassword' = $pnpWorkbook.Workbook.Names["wld_tor2_peer_bgp_password"].Value
+}
 
 $edgeNodeObject = @()
-    $edgeNodeObject += [pscustomobject]@{
-        'edgeNodeName' = $wldWorksheet.Cells['F86'].Value
-        'managementIP' = $wldWorksheet.Cells['H86'].Value+"/"+$wldWorksheet.Cells['H9'].Value.split("/")[-1]
-        'managementGateway' = $wldWorksheet.Cells['J9'].Value
-        'edgeTepGateway' = $wldWorksheet.Cells['J16'].Value
-        'edgeTep1IP' = $wldWorksheet.Cells['H89'].Value+"/"+$wldWorksheet.Cells['H16'].Value.split("/")[-1]
-        'edgeTep2IP' = $wldWorksheet.Cells['H90'].Value+"/"+$wldWorksheet.Cells['H16'].Value.split("/")[-1]
-        'edgeTepVlan' = $wldWorksheet.Cells['D16'].Value
-        'clusterId' = "CLUSTER-ID"
-        'interRackCluster' = "false"
-        uplinkNetwork = $uplink01NetworkObject
+$edgeNodeObject += [pscustomobject]@{
+    'edgeNodeName' = $pnpWorkbook.Workbook.Names["wld_en1_fqdn"].Value
+    'managementIP' = $pnpWorkbook.Workbook.Names["wld_en1_mgmt_interface_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_mgmt_cidr"].Value.split("/")[-1]
+    'managementGateway' = $pnpWorkbook.Workbook.Names["wld_mgmt_gateway"].Value
+    'edgeTepGateway' = $pnpWorkbook.Workbook.Names["wld_edge_overlay_gateway"].Value
+    'edgeTep1IP' = $pnpWorkbook.Workbook.Names["wld_en1_edge_overlay_interface_ip_1"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_edge_overlay_cidr"].Value.split("/")[-1]
+    'edgeTep2IP' = $pnpWorkbook.Workbook.Names["wld_en1_edge_overlay_interface_ip_2"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_edge_overlay_cidr"].Value.split("/")[-1]
+    'edgeTepVlan' = $pnpWorkbook.Workbook.Names["wld_edge_overlay_vlan"].Value
+    'clusterId' = "CLUSTER-ID"
+    'interRackCluster' = "false"
+    uplinkNetwork = $uplink01NetworkObject
 
-    }
-    $edgeNodeObject += [pscustomobject]@{
-        'edgeNodeName' = $wldWorksheet.Cells['F91'].Value
-        'managementIP' = $wldWorksheet.Cells['H91'].Value+"/"+$wldWorksheet.Cells['H9'].Value.split("/")[-1]
-        'managementGateway' = $wldWorksheet.Cells['J9'].Value
-        'edgeTepGateway' = $wldWorksheet.Cells['J16'].Value
-        'edgeTep1IP' = $wldWorksheet.Cells['H94'].Value+"/"+$wldWorksheet.Cells['H16'].Value.split("/")[-1]
-        'edgeTep2IP' = $wldWorksheet.Cells['H95'].Value+"/"+$wldWorksheet.Cells['H16'].Value.split("/")[-1]
-        'edgeTepVlan' = $wldWorksheet.Cells['D16'].Value
-        'clusterId' = "CLUSTER-ID"
-        'interRackCluster' = "false"
-        uplinkNetwork = $uplink02NetworkObject
-    }
+}
+$edgeNodeObject += [pscustomobject]@{
+    'edgeNodeName' = $pnpWorkbook.Workbook.Names["wld_en2_fqdn"].Value
+    'managementIP' = $pnpWorkbook.Workbook.Names["wld_en2_mgmt_interface_ip"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_mgmt_cidr"].Value.split("/")[-1]
+    'managementGateway' = $pnpWorkbook.Workbook.Names["wld_mgmt_gateway"].Value
+    'edgeTepGateway' = $pnpWorkbook.Workbook.Names["wld_edge_overlay_gateway"].Value
+    'edgeTep1IP' = $pnpWorkbook.Workbook.Names["wld_en2_edge_overlay_interface_ip_1"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_edge_overlay_cidr"].Value.split("/")[-1]
+    'edgeTep2IP' = $pnpWorkbook.Workbook.Names["wld_en2_edge_overlay_interface_ip_2"].Value+"/"+$pnpWorkbook.Workbook.Names["wld_edge_overlay_cidr"].Value.split("/")[-1]
+    'edgeTepVlan' = $pnpWorkbook.Workbook.Names["wld_edge_overlay_vlan"].Value
+    'clusterId' = "CLUSTER-ID"
+    'interRackCluster' = "false"
+    uplinkNetwork = $uplink02NetworkObject
+}
 
 $edgeClusterProfileObject = @()
-    $edgeClusterProfileObject += [pscustomobject]@{
-        'bfdAllowedHop' = "255" -as [int]
-	    'bfdDeclareDeadMultiple' = "3" -as [int]
-		'bfdProbeInterval' = "1000" -as [int]
-		'edgeClusterProfileName' = $wldWorksheet.Cells['G139'].Value
-		'standbyRelocationThreshold' = "30" -as [int]
-    }
+$edgeClusterProfileObject += [pscustomobject]@{
+    'bfdAllowedHop' = "255" -as [int]
+    'bfdDeclareDeadMultiple' = "3" -as [int]
+    'bfdProbeInterval' = "1000" -as [int]
+    'edgeClusterProfileName' = $pnpWorkbook.Workbook.Names["wld_ec_profile_name"].Value
+    'standbyRelocationThreshold' = "30" -as [int]
+}
 
 $workloadEdgeObject = @()
-    $workloadEdgeObject += [pscustomobject]@{
-        'edgeClusterName' = $wldWorksheet.Cells['G140'].Value
-        'edgeClusterProfileType' = "CUSTOM"
-        edgeClusterProfileSpec = ($edgeClusterProfileObject | Select-Object -Skip 0)
-        'edgeClusterType' = "NSX-T"
-	    'edgeRootPassword' = $nsxtPassword
-	    'edgeAdminPassword' = $nsxtPassword
-	    'edgeAuditPassword' = $nsxtPassword
-	    'edgeFormFactor' = "MEDIUM"
-	    'tier0ServicesHighAvailability' = "ACTIVE_ACTIVE"
-	    'mtu' = $wldWorksheet.Cells['L16'].Value -as [int]
-	    'asn' = $wldWorksheet.Cells['D23'].Value -as [int]
-	    'tier0RoutingType' = "EBGP"
-	    'tier0Name' = $wldWorksheet.Cells['G142'].Value
-	    'tier1Name' = $wldWorksheet.Cells['G143'].Value
-        edgeNodeSpecs = $edgeNodeObject
-    }
+$workloadEdgeObject += [pscustomobject]@{
+    'edgeClusterName' = $pnpWorkbook.Workbook.Names["wld_ec_name"].Value
+    'edgeClusterProfileType' = "CUSTOM"
+    edgeClusterProfileSpec = ($edgeClusterProfileObject | Select-Object -Skip 0)
+    'edgeClusterType' = "NSX-T"
+    'edgeRootPassword' = $nsxtPassword
+    'edgeAdminPassword' = $nsxtPassword
+    'edgeAuditPassword' = $nsxtPassword
+    'edgeFormFactor' = $pnpWorkbook.Workbook.Names["wld_ec_formfactor"].Value.ToUpper()
+    'tier0ServicesHighAvailability' = "ACTIVE_ACTIVE"
+    'mtu' = $pnpWorkbook.Workbook.Names["wld_edge_overlay_mtu"].Value -as [int]
+    'asn' = $pnpWorkbook.Workbook.Names["wld_en_asn"].Value
+    'tier0RoutingType' = "EBGP"
+    'tier0Name' = $pnpWorkbook.Workbook.Names["wld_t0_name"].Value
+    'tier1Name' = $pnpWorkbook.Workbook.Names["wld_t1_name"].Value
+    edgeNodeSpecs = $edgeNodeObject
+}
 
 LogMessage " Exporting the $module to $Json"
 
     $workloadEdgeObject | ConvertTo-Json -Depth 11 | Out-File -FilePath $Json
 LogMessage " Closing the Excel Workbook: $workbook"
-Close-ExcelPackage $pnpWorkbook
+Close-ExcelPackage $pnpWorkbook -ErrorAction SilentlyContinue
 LogMessage " Completed the Process of Generating the $module" Yellow

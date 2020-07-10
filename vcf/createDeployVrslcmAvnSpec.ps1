@@ -2,10 +2,10 @@
     .NOTES
     ===============================================================================================================
     .Created By:    Gary Blake
-    .Group:         HCI BU
+    .Group:         CPBU
     .Organization:  VMware, Inc.
-    .Version:       1.0 (Build 001)
-    .Date:          2020-06-15
+    .Version:       2.0 (Build 001)
+    .Date:          2020-07-10
     ===============================================================================================================
     .CREDITS
 
@@ -16,6 +16,8 @@
 
     - 1.0.000 (Gary Blake / 2020-05-29) - Initial script creation
     - 1.0.002 (Gary Blake / 2020-06-15) - Minor fixes
+    - 2.0.001 (Gary Blake / 2020-07-10) - Updated for VCF 4.0.1 where Named Cells in the Planning and Preparation
+                                          Workbook are now available
 
     ===============================================================================================================
     .DESCRIPTION
@@ -71,7 +73,7 @@ Function LogMessage {
 
 Try {
     LogMessage " Importing ImportExcel Module"
-    Import-Module ImportExcel
+    Import-Module ImportExcel -WarningAction SilentlyContinue -ErrorAction Stop
 }
 Catch {
     LogMessage " ImportExcel Module not found. Installing"
@@ -83,8 +85,7 @@ LogMessage " Opening the Excel Workbook: $Workbook"
 $pnpWorkbook = Open-ExcelPackage -Path $Workbook
 
 LogMessage " Checking Valid Planning and Prepatation Workbook Provided"
-$optionsWorksheet = $pnpWorkbook.Workbook.Worksheets["Deployment Options"]
-if ($optionsWorksheet.Cells['J8'].Value -ne "v4.0.0") {
+if ($pnpWorkbook.Workbook.Names["vcf_version"].Value -ne "v4.0.1") {
     LogMessage " Planning and Prepatation Workbook Provided Not Supported" Red 
     Break
 }
@@ -102,6 +103,6 @@ $resourcesObject = @()
 
 LogMessage " Exporting the $module to $Json"
 $resourcesObject | ConvertTo-Json | Out-File -FilePath $Json
-Close-ExcelPackage $pnpWorkbook
+Close-ExcelPackage $pnpWorkbook -ErrorAction SilentlyContinue
 LogMessage " Closing the Excel Workbook: $Workbook"
 LogMessage " Completed the Process of Generating the $module" Yellow

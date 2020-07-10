@@ -2,10 +2,10 @@
     .NOTES
     ===============================================================================================================
     .Created By:    Gary Blake
-    .Group:         HCI BU
+    .Group:         CPBU
     .Organization:  VMware, Inc.
-    .Version:       1.0 (Build 001)
-    .Date:          2020-06-15
+    .Version:       2.0 (Build 001)
+    .Date:          2020-07-10
     ===============================================================================================================
     .CREDITS
 
@@ -17,6 +17,8 @@
 
     - 1.0.000 (Gary Blake / 2020-05-29) - Initial script creation
     - 1.0.001 (Gary Blake / 2020-06-15) - Minor fixes
+    - 2.0.001 (Gary Blake / 2020-07-10) - Updated for VCF 4.0.1 where Named Cells in the Planning and Preparation
+                                          Workbook are now available
 
     ===============================================================================================================
     .DESCRIPTION
@@ -111,7 +113,7 @@ Function cidrToMask ($cidr) {
 
 Try {
     LogMessage " Importing ImportExcel Module"
-    Import-Module ImportExcel
+    Import-Module ImportExcel -WarningAction SilentlyContinue -ErrorAction Stop
 }
 Catch {
     LogMessage " ImportExcel Module not found. Installing"
@@ -123,76 +125,72 @@ LogMessage " Opening the Excel Workbook: $Workbook"
 $pnpWorkbook = Open-ExcelPackage -Path $Workbook
 
 LogMessage " Checking Valid Planning and Prepatation Workbook Provided"
-$optionsWorksheet = $pnpWorkbook.Workbook.Worksheets["Deployment Options"]
-if ($optionsWorksheet.Cells['J8'].Value -ne "v4.0.0") {
+if ($pnpWorkbook.Workbook.Names["vcf_version"].Value -ne "v4.0.1") {
     LogMessage " Planning and Prepatation Workbook Provided Not Supported" Red 
     Break
 }
 
 LogMessage " Extracting Worksheet Data from the Excel Workbook"
-$wldWorksheet = $pnpWorkbook.Workbook.Worksheets["Workload Domain"]
-$mgmtWorksheet = $pnpWorkbook.Workbook.Worksheets["Management Domain"]
-
 LogMessage " Generating the $module"
 
-$cidr = $wldWorksheet.Cells['H10'].Value.split("/")
+$cidr = $pnpWorkbook.Workbook.Names["mgmt_mgmt_cidr"].Value.split("/")
 $managmentMask = cidrToMask $cidr[1]
 
 $nsxtNode1Object = @()
     $nsxtNode1Object += [pscustomobject]@{
-        'ipAddress' = $wldWorksheet.Cells['H83'].Value
-        'dnsName' = $wldWorksheet.Cells['F83'].Value
-        'gateway' = $mgmtWorksheet.Cells['J10'].Value
+        'ipAddress' = $pnpWorkbook.Workbook.Names["wld_nsxt_mgra_ip"].Value
+        'dnsName' = $pnpWorkbook.Workbook.Names["wld_nsxt_mgra_fqdn"].Value
+        'gateway' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_gateway"].Value
         'subnetMask' = $managmentMask
     }
 
 $nsxtNode2Object = @()
     $nsxtNode2Object += [pscustomobject]@{
-        'ipAddress' = $wldWorksheet.Cells['H84'].Value
-        'dnsName' = $wldWorksheet.Cells['F84'].Value
-        'gateway' = $mgmtWorksheet.Cells['J10'].Value
+        'ipAddress' = $pnpWorkbook.Workbook.Names["wld_nsxt_mgrb_ip"].Value
+        'dnsName' = $pnpWorkbook.Workbook.Names["wld_nsxt_mgrb_fqdn"].Value
+        'gateway' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_gateway"].Value
         'subnetMask' = $managmentMask
     }
 
 $nsxtNode3Object = @()
     $nsxtNode3Object += [pscustomobject]@{
-        'ipAddress' = $wldWorksheet.Cells['H85'].Value
-        'dnsName' = $wldWorksheet.Cells['F85'].Value
-        'gateway' = $mgmtWorksheet.Cells['J10'].Value
+        'ipAddress' = $pnpWorkbook.Workbook.Names["wld_nsxt_mgrc_ip"].Value
+        'dnsName' = $pnpWorkbook.Workbook.Names["wld_nsxt_mgrc_fqdn"].Value
+        'gateway' = $pnpWorkbook.Workbook.Names["mgmt_mgmt_gateway"].Value
         'subnetMask' = $managmentMask
     }
 
 $nsxtManagerObject = @()
     $nsxtManagerObject += [pscustomobject]@{
-        'name' = $wldWorksheet.Cells['D83'].Value
+        'name' = $pnpWorkbook.Workbook.Names["wld_nsxt_mgra_name"].Value
         networkDetailsSpec = ($nsxtNode1Object | Select-Object -Skip 0)
     }
     $nsxtManagerObject += [pscustomobject]@{
-        'name' = $wldWorksheet.Cells['D84'].Value
+        'name' = $pnpWorkbook.Workbook.Names["wld_nsxt_mgrb_name"].Value
         networkDetailsSpec = ($nsxtNode2Object | Select-Object -Skip 0)
     }
     $nsxtManagerObject += [pscustomobject]@{
-        'name' = $wldWorksheet.Cells['D85'].Value
+        'name' = $pnpWorkbook.Workbook.Names["wld_nsxt_mgrc_name"].Value
         networkDetailsSpec = ($nsxtNode3Object | Select-Object -Skip 0)
     }
 
 $nsxtObject = @()
     $nsxtObject += [pscustomobject]@{
         nsxManagerSpecs = $nsxtManagerObject
-        'vip' = $wldWorksheet.Cells['H82'].Value
-        'vipFqdn' = $wldWorksheet.Cells['F82'].Value
-        'licenseKey' = $mgmtWorksheet.Cells['C130'].Value
+        'vip' = $pnpWorkbook.Workbook.Names["wld_nsxt_vip_ip"].Value
+        'vipFqdn' = $pnpWorkbook.Workbook.Names["wld_nsxt_vip_fqdn"].Value
+        'licenseKey' = $pnpWorkbook.Workbook.Names["nsxt_license"].Value
         'nsxManagerAdminPassword' = $nsxtPassword
     }
 
 $vmnicObject = @()
     $vmnicObject += [pscustomobject]@{
-        'id' = $wldWorksheet.Cells['G136'].Value
-		'vdsName' = $wldWorksheet.Cells['G138'].Value
+        'id' = $pnpWorkbook.Workbook.Names["wld_vss_mgmt_nic"].Value
+        'vdsName' = $pnpWorkbook.Workbook.Names["wld_vds_name"].Value
     }
     $vmnicObject += [pscustomobject]@{
-        'id' = $wldWorksheet.Cells['G137'].Value
-		'vdsName' = $wldWorksheet.Cells['G138'].Value
+        'id' = $pnpWorkbook.Workbook.Names["wld_vds_mgmt_nic"].Value
+        'vdsName' = $pnpWorkbook.Workbook.Names["wld_vds_name"].Value
     }
 
 $hostnetworkObject = @()
@@ -200,56 +198,58 @@ $hostnetworkObject = @()
         vmNics = $vmnicObject
     }
 
+if ($pnpWorkbook.Workbook.Names["K8S_Result"].Value -eq "Included") {
+    $Global:wldEsxiLicenseKey = $pnpWorkbook.Workbook.Names["esx_license_k8s"].Value
+}
+elseif ($pnpWorkbook.Workbook.Names["K8S_Result"].Value -eq "Excluded") {
+    $Global:wldEsxiLicenseKey = $pnpWorkbook.Workbook.Names["esx_license_std"].Value
+}
+
 $hostObject = @()
     $hostObject += [pscustomobject]@{
         'id' = "HOST-1"
-        'licenseKey' = $wldWorksheet.Cells['G135'].Value
+        'licenseKey' = $wldEsxiLicenseKey
         hostNetworkSpec = ($hostnetworkObject | Select-Object -Skip 0)
     }
     $hostObject += [pscustomobject]@{
         'id' = "HOST-2"
-        'licenseKey' = $wldWorksheet.Cells['G135'].Value
+        'licenseKey' = $wldEsxiLicenseKey
         hostNetworkSpec = ($hostnetworkObject | Select-Object -Skip 0)
     }
     $hostObject += [pscustomobject]@{
         'id' = "HOST-3"
-        'licenseKey' = $wldWorksheet.Cells['G135'].Value
+        'licenseKey' = $wldEsxiLicenseKey
         hostNetworkSpec = ($hostnetworkObject | Select-Object -Skip 0)
     }
     $hostObject += [pscustomobject]@{
         'id' = "HOST-4"
-        'licenseKey' = $wldWorksheet.Cells['G135'].Value
+        'licenseKey' = $wldEsxiLicenseKey
         hostNetworkSpec = ($hostnetworkObject | Select-Object -Skip 0)
     }
 
 $portgroupObject = @()
     $portgroupObject += [pscustomobject]@{
-        'name' = $wldWorksheet.Cells['F10'].Value
-		'transportType' = "MANAGEMENT"
+        'name' = $pnpWorkbook.Workbook.Names["wld_mgmt_pg"].Value
+        'transportType' = "MANAGEMENT"
     }
     $portgroupObject += [pscustomobject]@{
-        'name' = $wldWorksheet.Cells['F11'].Value
-		'transportType' = "VMOTION"
+        'name' = $pnpWorkbook.Workbook.Names["wld_vmotion_pg"].Value
+        'transportType' = "VMOTION"
     }
     $portgroupObject += [pscustomobject]@{
-        'name' = $wldWorksheet.Cells['F12'].Value
-		'transportType' = "VSAN"
+        'name' = $pnpWorkbook.Workbook.Names["wld_vsan_pg"].Value
+        'transportType' = "VSAN"
     }
 
 $vdsObject = @()
     $vdsObject += [pscustomobject]@{
-        'name' = $wldWorksheet.Cells['G138'].Value
+        'name' = $pnpWorkbook.Workbook.Names["wld_vds_name"].Value
         portGroupSpecs = $portgroupObject
     }
 
 $nsxTClusterObject = @()
     $nsxTClusterObject += [pscustomobject]@{
-        'geneveVlanId' = $wldWorksheet.Cells['D13'].Value
-    }
-
-$nsxTClusterObject = @()
-    $nsxTClusterObject += [pscustomobject]@{
-        'geneveVlanId' = $wldWorksheet.Cells['D13'].Value
+        'geneveVlanId' = $pnpWorkbook.Workbook.Names["wld_host_overlay_vlan"].Value
     }
 
 $nsxClusterObject = @()
@@ -266,8 +266,8 @@ $networkObject = @()
 $vsanDatastoreObject = @()
     $vsanDatastoreObject += [pscustomobject]@{
         'failuresToTolerate' = "1"
-		'licenseKey' = $mgmtWorksheet.Cells['C129'].Value
-        'datastoreName' = $wldWorksheet.Cells['G145'].Value
+        'licenseKey' = $pnpWorkbook.Workbook.Names["vsan_license"].Value
+        'datastoreName' = $pnpWorkbook.Workbook.Names["wld_vsan_datastore"].Value
     }
 
 $vsanObject = @()
@@ -277,7 +277,7 @@ $vsanObject = @()
 
 $clusterObject = @()
     $clusterObject += [pscustomobject]@{
-        'name' = $wldWorksheet.Cells['G147'].Value
+        'name' = $pnpWorkbook.Workbook.Names["wld_cluster"].Value
         hostSpecs = $hostObject
         datastoreSpec = ($vsanObject | Select-Object -Skip 0)
         networkSpec = ($networkObject | Select-Object -Skip 0)
@@ -290,24 +290,24 @@ $computeObject = @()
 
 $vcenterNetworkObject = @()
     $vcenterNetworkObject += [pscustomobject]@{
-        'ipAddress' = $wldWorksheet.Cells['H77'].Value
-        'dnsName' = $wldWorksheet.Cells['F77'].Value
-        'gateway'= $mgmtWorksheet.Cells['J10'].Value
+        'ipAddress' = $pnpWorkbook.Workbook.Names["wld_vc_ip"].Value
+        'dnsName' = $pnpWorkbook.Workbook.Names["wld_vc_fdqn"].Value
+        'gateway'= $pnpWorkbook.Workbook.Names["mgmt_mgmt_gateway"].Value
         'subnetMask' = $managmentMask
     }
 
 $vcenterObject = @()
     $vcenterObject += [pscustomobject]@{
-        'name' = $wldWorksheet.Cells['D77'].Value
+        'name' = $pnpWorkbook.Workbook.Names["wld_vc_name"].Value
         networkDetailsSpec = ($vcenterNetworkObject | Select-Object -Skip 0)
         'rootPassword' = $vCenterPassword
-        'datacenterName' = $wldWorksheet.Cells['G146'].Value
+        'datacenterName' = $pnpWorkbook.Workbook.Names["wld_datacenter"].Value
     }
 
 $workloadDomainObject = @()
     $workloadDomainObject += [pscustomobject]@{
-        'domainName' = $wldWorksheet.Cells['G128'].Value
-        'orgName' = $wldWorksheet.Cells['G129'].Value
+        'domainName' = $pnpWorkbook.Workbook.Names["wld_sddc_domain"].Value
+        'orgName' = $pnpWorkbook.Workbook.Names["wld_sddc_org"].Value
         vcenterSpec = ($vcenterObject | Select-Object -Skip 0)
         computeSpec = ($computeObject | Select-Object -Skip 0)
         nsxTSpec = ($nsxtObject | Select-Object -Skip 0)
@@ -315,7 +315,7 @@ $workloadDomainObject = @()
 
 LogMessage " Exporting the $module to $Json"
 
-    $workloadDomainObject | ConvertTo-Json -Depth 11 | Out-File -FilePath $Json
+$workloadDomainObject | ConvertTo-Json -Depth 11 | Out-File -FilePath $Json
 LogMessage " Closing the Excel Workbook: $workbook"
-Close-ExcelPackage $pnpWorkbook
+Close-ExcelPackage $pnpWorkbook -ErrorAction SilentlyContinue
 LogMessage " Completed the Process of Generating the $module" Yellow
