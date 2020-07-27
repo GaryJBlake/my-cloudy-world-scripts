@@ -145,7 +145,7 @@ Function deployCloudProxy
                 if (($response -eq 'Y') -OR ($response -eq 'y')) {
                     LogMessage "Deleting discovered $module Instance"
                     Try {
-                        if ($cloudProxyExists.PoweredOn -eq "PoweredOn") {
+                        if ($cloudProxyExists.PowerState -eq "PoweredOn") {
                             Stop-VM -VM $cloudProxyExists -Kill -Confirm:$false | Out-Null
                         }
                         Remove-VM $cloudProxyExists -DeletePermanently -confirm:$false | Out-Null
