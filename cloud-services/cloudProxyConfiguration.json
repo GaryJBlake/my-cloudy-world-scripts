@@ -1,0 +1,21 @@
+{
+    "ONE_TIME_KEY": "eyJyZWdpc3RyYXRpb25VcmwiOiJodHRwczovL2FwaS5tZ210LmNsb3VkLnZtd2FyZS5jb20vZjVjNTgzMjYtMTZlNS00YmJiLTg2YWYtMzIxMGFmMWRiMmVjIiwib3RrIjoiTU41Uy1DWllFLTQ2VzctWjJDUyIsInRlbmFudElkIjoiL3RlbmFudHMvb3JnYW5pemF0aW9uL2Y1YzU4MzI2LTE2ZTUtNGJiYi04NmFmLTMyMTBhZjFkYjJlYyIsInByb3h5SWQiOiI2YjA3MTFlMS02MjhjLTRjM2MtYjE2MS1kNWUxOTU5ZjZlOTgifQ==",
+    "itfm_root_password": "VMw@re1!",
+    "rdc_name": "ldn-cpxy01",
+    "network_proxy_hostname_or_ip": "",
+    "network_proxy_port": "",
+    "network_proxy_username": "",
+    "network_proxy_password": "",
+    "IpProtocol": "IPv4",
+    "Network_1": "VLAN-1611",
+    "gateway": "172.16.11.1",
+    "domain": "cloudy.io",
+    "searchpath": "cloudy.io",
+    "DNS": "172.16.11.4",
+    "ip0": "172.16.11.10",
+    "netmask0": "255.255.255.0",
+    "vmHost": "lab01esx01.sddc.local",
+    "cluster": "HomeLab-cl01",
+    "datastore": "lab01esx01-local",
+    "diskFormat": "thin"
+}
