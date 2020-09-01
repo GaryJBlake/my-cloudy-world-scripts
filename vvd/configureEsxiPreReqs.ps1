@@ -19,12 +19,12 @@
     ===============================================================================================================
     .DESCRIPTION
 
-    This script automates performing the prerequisite configugration tasks for each ESXi Hosts that is consumed by
-    SDDC Manager. It uses the Planning and Preparation Workbook to obtain the required details.
+    This script automates performing the prerequisite configugration tasks for each ESXi Hosts that is used by Cloud
+    Foundation.
 
     .EXAMPLE
 
-    .\configureEsxiPreRreqs.ps1 -fqdn sfo01-m01-esx01.sfo.rainpole.io -rootPassword VMw@re1! -dnsServer1 172.20.11.4 -dnsServer2 172.20.11.5 -ntpServer ntp.sfo.rainpole.io -managamentVlan 3072
+    .\configureEsxiPreReqs.ps1 -fqdn sfo01-m01-esx01.sfo.rainpole.io -rootPassword VMw@re1! -dnsServer1 172.20.11.4 -dnsServer2 172.20.11.5 -ntpServer ntp.sfo.rainpole.io -managamentVlan 3072
 #>
 
 Param(
