@@ -4,8 +4,8 @@
     .Created By:    Gary Blake
     .Group:         CPBU
     .Organization:  VMware, Inc.
-    .Version:       1.0 (Build 001)
-    .Date:          2020-09-01
+    .Version:       1.0.001
+    .Date:          2020-09-07
     ===============================================================================================================
     .CREDITS
 
@@ -15,6 +15,8 @@
     .CHANGE_LOG
 
     - 1.0.000 (Gary Blake / 2020-09-01) - Initial script creation
+    - 1.0.001 (Gary Blake / 2020-09-01) - Updates to LogMessages
+                                        - Added Support for a Second NTP Server
 
     ===============================================================================================================
     .DESCRIPTION
@@ -24,7 +26,7 @@
 
     .EXAMPLE
 
-    .\configureEsxiPreReqs.ps1 -fqdn sfo01-m01-esx01.sfo.rainpole.io -rootPassword VMw@re1! -dnsServer1 172.20.11.4 -dnsServer2 172.20.11.5 -ntpServer ntp.sfo.rainpole.io -managamentVlan 3072
+    .\configureEsxiPreReqs.ps1 -fqdn sfo01-m01-esx01.sfo.rainpole.io -rootPassword VMw@re1! -dnsServer1 172.20.11.4 -dnsServer2 172.20.11.5 -ntpServer1 ntp.sfo.rainpole.io -ntpServer2 ntp.lax.rainpole.io -managamentVlan 3072
 #>
 
 Param(
@@ -37,7 +39,9 @@ Param(
     [Parameter(Mandatory=$false)]
         [String]$dnsServer2,
     [Parameter(Mandatory=$true)]
-        [String]$ntpserver,
+        [String]$ntpServer1,
+    [Parameter(Mandatory=$false)]
+        [String]$ntpServer2,
     [Parameter(Mandatory=$true)]
         [Int32]$managementVlan
 )
@@ -189,7 +193,7 @@ Try {
         Set-VMHostService -HostService (Get-VMHostservice | Where {$_.key -eq "TSM-SSH"}) -Policy "On" -Confirm:$false | Out-File $logFile -Encoding ASCII -Append
         LogMessage -message "Setting the Status of the SSH Service to Started on $fqdn"
         Get-VMHostService | Where {$_.key -eq 'TSM-SSH'} | Start-VMHostService -Confirm:$false | Out-File $logFile -Encoding ASCII -Append
-        LogMessage -message "Configured SSH Service on $fqdn Successfully" -colour Green
+        LogMessage -message "Configured SSH Service and Start-Up Policy on $fqdn Successfully" -colour Green
     }
     Catch {
         catchwriter -object $_
@@ -205,14 +209,19 @@ Try {
                 LogMessage -message "Removed NTP Server $ntpServer on $fqdn"
             }
         }
-        LogMessage -message "Setting NTP Server $ntpServer on $fqdn"
-        Add-VMHostNtpServer -VMHost $fqdn -NtpServer $ntpServer -Confirm:$false | Out-File $logFile -encoding ASCII -append
+        LogMessage -message "Setting NTP Server $ntpServer1 on $fqdn"
+        Add-VMHostNtpServer -VMHost $fqdn -NtpServer $ntpServer1 -Confirm:$false | Out-File $logFile -encoding ASCII -append
+        If ($ntpServer2 -ne "")
+        {
+            LogMessage -message "Setting NTP Server $ntpServer2 on $fqdn"
+            Add-VMHostNtpServer -VMHost $fqdn -NtpServer $ntpServer2 -Confirm:$false | Out-File $logFile -encoding ASCII -append
+        }
         LogMessage -message "Restarting NTP Service on $fqdn"
         Get-VMHostService | Where {$_.key -eq 'ntpd'} | Stop-VMHostService -Confirm:$false | Out-File $logFile -encoding ASCII -append 
         Get-VMHostService | Where {$_.key -eq 'ntpd'} | Start-VMHostService -Confirm:$false | Out-File $logFile -encoding ASCII -append 
         LogMessage -message "Setting NTP Startup Policy to 'Start and Stop with Host' on $fqdn"
         Set-VMHostService -HostService (Get-VMHostservice | Where {$_.key -eq "ntpd"}) -Policy "On" | Out-File $logFile -encoding ASCII -append 
-        LogMessage -message "Configured NTP Service and Startup Policy on $fqdn Successfully" -colour Green
+        LogMessage -message "Configured NTP Service and Start-Up Policy on $fqdn Successfully" -colour Green
         
     }
     Catch {
