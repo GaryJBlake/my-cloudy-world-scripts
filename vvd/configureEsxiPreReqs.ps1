@@ -4,7 +4,7 @@
     .Created By:    Gary Blake
     .Group:         CPBU
     .Organization:  VMware, Inc.
-    .Version:       1.0.001
+    .Version:       1.0.000
     .Date:          2020-09-07
     ===============================================================================================================
     .CREDITS
@@ -15,21 +15,19 @@
     .CHANGE_LOG
 
     - 1.0.000 (Gary Blake / 2020-09-01) - Initial script creation
-    - 1.0.001 (Gary Blake / 2020-09-01) - Updates to LogMessages
-                                        - Added Support for a Second NTP Server
 
     ===============================================================================================================
     .DESCRIPTION
 
-    This script automates performing the prerequisite configugration tasks for each ESXi Hosts that is used by Cloud
-    Foundation.
+    This script automates performing the prerequisite configuration tasks for each ESXi Host that is used by VMware
+    Cloud Foundation.
 
     .EXAMPLE
 
     .\configureEsxiPreReqs.ps1 -fqdn sfo01-m01-esx01.sfo.rainpole.io -rootPassword VMw@re1! -dnsServer1 172.20.11.4 -dnsServer2 172.20.11.5 -ntpServer1 ntp.sfo.rainpole.io -ntpServer2 ntp.lax.rainpole.io -managamentVlan 3072
 #>
 
-Param(
+Param (
     [Parameter(Mandatory=$true)]
         [String]$fqdn,
     [Parameter(Mandatory=$true)]
@@ -45,8 +43,6 @@ Param(
     [Parameter(Mandatory=$true)]
         [Int32]$managementVlan
 )
-
-$module = "Configure ESXi Host Prerequisites"
 
 $hostname = $fqdn.Split(".")[0]
 $pos = $fqdn.IndexOf(".")
@@ -100,7 +96,8 @@ Function catchWriter
 	Param(
         [Parameter(mandatory=$true)]
         [PSObject]$object
-        )
+    )
+
     $lineNumber = $object.InvocationInfo.ScriptLineNumber
 	$lineText = $object.InvocationInfo.Line.trim()
 	$errorMessage = $object.Exception.Message
@@ -114,7 +111,7 @@ Clear-Host
 Try {
     setupLogFile # Create new log
 
-    LogMessage -message "Starting the Process of Configuring ESXi Prerequisites for VMware Cloud Foundation" -colour Yellow
+    LogMessage -message "Starting the Process of Configuring ESXi Host Prerequisites for VMware Cloud Foundation" -colour Yellow
     
     # Attempt to make a connection to the ESXi Host
     Try {   
@@ -210,11 +207,11 @@ Try {
             }
         }
         LogMessage -message "Setting NTP Server $ntpServer1 on $fqdn"
-        Add-VMHostNtpServer -VMHost $fqdn -NtpServer $ntpServer1 -Confirm:$false | Out-File $logFile -encoding ASCII -append
+        Add-VMHostNtpServer -VMHost $fqdn -NtpServer $ntpServer1 -Confirm:$false  -ErrorAction silentlyContinue | Out-File $logFile -encoding ASCII -append
         If ($ntpServer2 -ne "")
         {
             LogMessage -message "Setting NTP Server $ntpServer2 on $fqdn"
-            Add-VMHostNtpServer -VMHost $fqdn -NtpServer $ntpServer2 -Confirm:$false | Out-File $logFile -encoding ASCII -append
+            Add-VMHostNtpServer -VMHost $fqdn -NtpServer $ntpServer2 -Confirm:$false -ErrorAction silentlyContinue | Out-File $logFile -encoding ASCII -append
         }
         LogMessage -message "Restarting NTP Service on $fqdn"
         Get-VMHostService | Where {$_.key -eq 'ntpd'} | Stop-VMHostService -Confirm:$false | Out-File $logFile -encoding ASCII -append 
@@ -238,7 +235,7 @@ Try {
         catchwriter -object $_
     }
 
-    LogMessage -message "Completed the Process of Configuring ESXi Prerequisites for VMware Cloud Foundation" -colour Yellow  
+    LogMessage -message "Completed the Process of Configuring ESXi Host Prerequisites for VMware Cloud Foundation" -colour Yellow  
 }
 Catch {
     catchwriter -object $_

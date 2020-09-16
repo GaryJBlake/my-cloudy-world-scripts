@@ -4,8 +4,8 @@
     .Created By:    Gary Blake
     .Group:         CPBU
     .Organization:  VMware, Inc.
-    .Version:       2.0 (Build 001)
-    .Date:          2020-07-03
+    .Version:       2.0 (Build 002)
+    .Date:          2020-09-16
     ===============================================================================================================
     .CREDITS
 
@@ -19,11 +19,12 @@
     - 1.0.001 (Gary Blake / 2020-06-15) - Minor fixes
     - 2.0.001 (Gary Blake / 2020-07-03) - Updated for VCF 4.0.1 where Named Cells in the Planning and Preparation
                                           Workbook are now available
+    - 2.0.002 (Gary Blake / 2020-09-16) - Fixed spelling mistake                           
 
     ===============================================================================================================
     .DESCRIPTION
 
-    This script automates the process of creating the JSON Spec needed for creating a Managementy Domain with VMware
+    This script automates the process of creating the JSON Spec needed for creating a Management Domain with VMware
     Cloud Builder. It uses the Planning and Preparation Workbook to obtain the required details needed in the JSON file
     that can then be consumed via the VMware Cloud Foundation Public API or PowerVCF.
 
