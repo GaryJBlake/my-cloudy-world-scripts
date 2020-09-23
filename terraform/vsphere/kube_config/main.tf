@@ -8,17 +8,17 @@ provider "vsphere" {
 }
 
 resource "vsphere_tag_category" "category" {
-  name        = var.vsphere_tag_category
-  cardinality = "SINGLE"
-  description = var.vsphere_description
+    name        = var.vsphere_tag_category
+    cardinality = "SINGLE"
+    description = var.vsphere_description
 
-  associable_types = [
-    "Datastore",
-  ]
+    associable_types = [
+        "Datastore",
+    ]
 }
 
 resource "vsphere_tag" "tag" {
-  name        = var.vsphere_tag
-  category_id = vsphere_tag_category.category.id
-  description = var.vsphere_description
+    name        = var.vsphere_tag
+    category_id = vsphere_tag_category.category.id
+    description = var.vsphere_description
 }
