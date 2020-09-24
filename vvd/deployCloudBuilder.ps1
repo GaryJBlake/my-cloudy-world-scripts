@@ -113,6 +113,52 @@ Function catchWriter
 	LogMessage -message " Error Message: $errorMessage" -colour Red
 }
 
+Function checkModules
+{
+    Try {
+        $powershellModuleName = "ImportExcel"
+        LogMessage -message "Prerequisite Validation - Checking for PowerShell Module: $powershellModuleName"
+        $checkImportExcel = Get-InstalledModule -Name ImportExcel -ErrorAction SilentlyContinue
+        if (!$checkImportExcel) {
+            LogMessage -message "PowerShell Module Not Installed: $powershellModuleName" -colour Red
+            LogMessage -message "Attempting to Install PowerShell Module: $powershellModuleName"
+            Install-Module ImportExcel -Force -Confirm:$false | Out-File $logFile -Encoding ASCII -Append
+        }
+        else {
+            LogMessage -message "PowerShell Module Found: $powershellModuleName"
+            LogMessage -message "Attempting to Import Module Found: $powershellModuleName"
+            Import-Module ImportExcel | Out-File $logFile -Encoding ASCII -Append
+            LogMessage -message "Imported PowerShell Module: $powershellModuleName Succesfully" -colour Green
+        }
+    }
+    Catch {
+        catchwriter -object $_
+    }
+
+    Try {
+        $powershellModuleName = "PowerVCF"
+        $powershellModuleVersion = "2.1.0"
+        LogMessage -message "Prerequisite Validation - Checking for PowerShell Module: $powershellModuleName"
+        $checkPowerVcf = Get-InstalledModule -Name PowerVCF -ErrorAction SilentlyContinue
+        if ($checkPowerVcf.Version -eq $powershellModuleVersion) {
+            LogMessage -message "PowerShell Module Found: $powershellModuleName"
+            LogMessage -message "Attempting to Import Module Found: $powershellModuleName"
+            Import-Module PowerVCF | Out-File $logFile -Encoding ASCII -Append
+            LogMessage -message "Imported PowerShell Module: $powershellModuleName Succesfully" -colour Green
+        }
+        else {
+            LogMessage -message "PowerShell Module Not Installed: $powershellModuleName" -colour Red
+            LogMessage -message "Attempting to Install PowerShell Module: $powershellModuleName"
+            Install-PackageProvider NuGet -Force | Out-File $logFile -Encoding ASCII -Append
+            Set-PSRepository PSGallery -InstallationPolicy Trusted | Out-File $logFile -Encoding ASCII -Append
+            Install-Module PowerVCF -MinimumVersion $powershellModuleVersion -Force -Confirm:$false | Out-File $logFile -Encoding ASCII -Append  
+        }
+    }
+    Catch{
+        catchwriter -object $_
+    }
+}
+
 Function cidrToMask ($cidr)
 {
     $subnetMasks = @(
@@ -157,9 +203,10 @@ Function cidrToMask ($cidr)
 Clear-Host
 
 Try {
-    setupLogFile # Create new log
-
     LogMessage -message "Starting the Process of Deploying VMware Cloud Builder" -colour Yellow
+
+    setupLogFile # Create new log
+    checkModules # Check PowerShell Modules
 
     LogMessage -message "Checking the VMware Cloud Builder OVA Path: $ovaPath is Valid"
     if (!(Test-Path -Path $ovaPath)) {
