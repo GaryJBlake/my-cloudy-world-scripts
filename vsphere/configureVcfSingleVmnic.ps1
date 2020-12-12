@@ -1,28 +1,35 @@
-<#
-.NOTES
-================================================================================
-Created by:    Gary Blake
-Date:          11/12/2020
-Organization:  VMware
-Blog:          http:/my-cloudy-world.com
-Twitter:       @GaryJBlake
-================================================================================
-.SYNOPSIS
-Reconfigures ESXi Hosts with Single vmnic
+<#	SCRIPT DETAILS
+    .NOTES
+    ===============================================================================================================
+    .Created By:    Gary Blake
+    .Blog:          http:/my-cloudy-world.com
+    .Twitter:       @GaryJBlake
+    .Version:       1.0 (Build 002)
+    .Date:          2020-12-12
+    ===============================================================================================================
+    .CREDITS
 
-.DESCRIPTION
-This scripts executes a number of steps in order to perform the reconfiguration
-of ESXi Hosts that have a single active vmnic. It uses the managementDomain.json
-as the input and then performs the following steps:
-- Migrates the vCenter from vDS to vSS Portgroup
-- Configures the Advanced Setting in vCenter Server to Network Rollback
-- Reboots the vCenter Server
-- Migrates the First ESXi Host vmk0 and vmnic to the vDS from vSS
-- Migrates the vCenter Server from vSS to vDS Portgroup
-- Migrates the vmk0 and vmnic to the vDS from vSS for the remaining ESXi Hosts
+    - William Lam & Ken Gould - LogMessage Function
 
-.EXAMPLE
-.\configureVcfSingleVmnic.ps1 -json managementDomain.json
+    ===============================================================================================================
+    .CHANGE_LOG
+
+    - 1.0.001 (Gary Blake / 2020-12-11) - Initial script creation
+    - 1.0.002 (Gary Blake / 2020-12-12) - Updated all variables to be obtained from management domain spec
+
+    ===============================================================================================================
+    .DESCRIPTION
+    This scripts executes a number of steps in order to perform the reconfiguration of ESXi Hosts that have a
+    single active vmnic. It uses the managementDomain.json as the input and then performs the following steps:
+    - Migrates the vCenter from vDS to vSS Portgroup
+    - Configures the Advanced Setting in vCenter Server to Network Rollback
+    - Reboots the vCenter Server
+    - Migrates the First ESXi Host vmk0 and vmnic to the vDS from vSS
+    - Migrates the vCenter Server from vSS to vDS Portgroup
+    - Migrates the vmk0 and vmnic to the vDS from vSS for the remaining ESXi Hosts
+
+    .EXAMPLE
+    .\configureVcfSingleVmnic.ps1 -json managementDomain.json
 #>
 
 Param (
@@ -36,18 +43,18 @@ $jsonPath = $PSScriptRoot+"\"+$json
 Write-LogMessage  -Message "Reading the Management Domain JSON Spec" -Colour Yellow
 $Global:cbJson = (Get-Content -Raw $jsonPath) | ConvertFrom-Json
 
-$esxiHost0 = "sfo01-m01-esx01.sfo.rainpole.io"
-$esxiHost1 = "sfo01-m01-esx02.sfo.rainpole.io"
-$esxiHost2 = "sfo01-m01-esx03.sfo.rainpole.io"
-$esxiHost3 = "sfo01-m01-esx04.sfo.rainpole.io"
+$esxiHostUser = $cbJson.hostSpecs.credentials.username[0]
+$esxiHostPassword = $cbJson.hostSpecs.credentials.password[0]
+$esxiHost0 = $cbJson.hostSpecs.hostname[0]+"."+$cbJson.dnsSpec.subdomain
+$esxiHost1 = $cbJson.hostSpecs.hostname[1]+"."+$cbJson.dnsSpec.subdomain
+$esxiHost2 = $cbJson.hostSpecs.hostname[2]+"."+$cbJson.dnsSpec.subdomain
+$esxiHost3 = $cbJson.hostSpecs.hostname[3]+"."+$cbJson.dnsSpec.subdomain
 
-$esxiHostUser = "root"
-$esxiHostpassword = "VMw@re1!"
 $vCenterFqdn = $cbJson.vcenterSpec.vcenterHostname+'.'+$cbJson.dnsSpec.subdomain
 $vCenterAdminUser = "administrator@vsphere.local"
 $vCenterAdminPassword = $cbJson.pscSpecs.adminUserSsoPassword
 $vmName = $cbJson.vcenterSpec.vcenterHostname
-$portgroup1 = "sfo01-m01-cl01-vds01-pg-mgmt"
+$portgroup1 = $cbJson.networkSpecs.portGroupKey[0]
 $portgroup2 = "VM Network"
 
 Function checkPowershellModules
