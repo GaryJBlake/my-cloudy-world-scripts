@@ -116,7 +116,7 @@ Function connectVsphere ($hostname, $user, $password) {
     Try {
         Write-LogMessage -Message "Connecting to vCenter/ESXi Server $hostname"
         Connect-VIServer -Server $hostname -User $user -Password $password | Out-File $logFile -Encoding ASCII -Append
-        Write-LogMessage -Message "Connected to vCenter/ESXi Server $hostname successfully" -Colour Green
+        Write-LogMessage -Message "Connected to vCenter/ESXi Server $hostname Successfully" -Colour Green
     }
     Catch {
         Debug-CatchWriter -object $_ 
@@ -128,20 +128,6 @@ Function disconnectVsphere ($hostname) {
         Write-LogMessage -Message "Disconnecting from vCenter/ESXi Server $hostname"
         Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
         Write-LogMessage -Message "Disconnected from vCenter/ESXi Server $hostname Successfully" -Colour Green
-    }
-    Catch {
-        Debug-CatchWriter -object $_ 
-    }
-}
-
-Function vCenterVss {
-    Try {
-        # Reconfigure vCenter Server Port Group from vSphere Distributed Switch back to vSphere Stadnard Switch
-        connectVsphere -hostname $esxiHost0 -user $esxiHostUser -password $esxiHostPassword
-        #Write-LogMessage -Message "Reconfigure vCenter Serer $vCenterFqdn Port Group from $portgroup1 to $portgroup2"
-        #Set-UpdatePortgroup -vmName $vmName -oldPortgroup $portgroup1 -newPortgroup $portgroup2 | Out-File $logFile -Encoding ASCII -Append
-        updatePortgroup -vmName "sfo-vcf01" -oldPortgroup $portgroup1 -newPortgroup $portgroup2
-        disconnectVsphere -hostname $esxiHost0
     }
     Catch {
         Debug-CatchWriter -object $_ 
@@ -577,13 +563,24 @@ Try {
     $portgroup2 = "VM Network"
 
     connectVsphere -hostname $esxiHost0 -user $esxiHostUser -password $esxiHostPassword # Connect to First ESXi Host
-    updatePortgroup -vmName $vmName -oldPortgroup $portgroup1 -newPortgroup $portgroup2 # Migrate vCenter Server from vDS to vSS
-    disconnectVsphere -hostname $esxiHost0 # Disconnect from First ESXi Host
+    if ($DefaultVIServer.Name -eq $esxiHost0) {
+        updatePortgroup -vmName $vmName -oldPortgroup $portgroup1 -newPortgroup $portgroup2 # Migrate vCenter Server from vDS to vSS
+        disconnectVsphere -hostname $esxiHost0 # Disconnect from First ESXi Host
+    }
+    else {
+        Write-LogMessage  -Message "Connection Attempt to $esxiHost0 Failed" -Colour Red
+        Exit
+    }
 
-    #connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
-    #Get-AdvancedSetting -Entity $vCenterFqdn -Name config.vpxd.network.rollback | Set-AdvancedSetting -Value 'false' -Confirm:$false | Out-File $logFile -Encoding ASCII -Append # Set vCenter Advanced Setting config.vpxd.network.rollback to false
-    #disconnectVsphere -hostname $vCenterFqdn # Disconnect from First ESXi Host
-    #rollbackFalse
+    connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
+    if ($DefaultVIServer.Name -eq $vCenterFqdn) {
+        Get-AdvancedSetting -Entity $vCenterFqdn -Name config.vpxd.network.rollback | Set-AdvancedSetting -Value 'false' -Confirm:$false | Out-File $logFile -Encoding ASCII -Append # Set vCenter Advanced Setting config.vpxd.network.rollback to false
+        disconnectVsphere -hostname $vCenterFqdn # Disconnect from First ESXi Host
+    }
+    else {
+        Write-LogMessage  -Message "Connection Attempt to $esxiHost0 Failed" -Colour Red
+        Exit
+    }
 
     #rebootVcenter -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Reboot vCenter Server
     ##migrateNetworking
