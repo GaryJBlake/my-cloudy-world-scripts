@@ -39,50 +39,22 @@ Param (
 
 Clear-Host
 
-$jsonPath = $PSScriptRoot+"\"+$json
-Write-LogMessage  -Message "Reading the Management Domain JSON Spec" -Colour Yellow
-$Global:cbJson = (Get-Content -Raw $jsonPath) | ConvertFrom-Json
-
-$esxiHostUser = $cbJson.hostSpecs.credentials.username[0]
-$esxiHostPassword = $cbJson.hostSpecs.credentials.password[0]
-$esxiHost0 = $cbJson.hostSpecs.hostname[0]+"."+$cbJson.dnsSpec.subdomain
-$esxiHost1 = $cbJson.hostSpecs.hostname[1]+"."+$cbJson.dnsSpec.subdomain
-$esxiHost2 = $cbJson.hostSpecs.hostname[2]+"."+$cbJson.dnsSpec.subdomain
-$esxiHost3 = $cbJson.hostSpecs.hostname[3]+"."+$cbJson.dnsSpec.subdomain
-
-$vCenterFqdn = $cbJson.vcenterSpec.vcenterHostname+'.'+$cbJson.dnsSpec.subdomain
-$vCenterAdminUser = "administrator@vsphere.local"
-$vCenterAdminPassword = $cbJson.pscSpecs.adminUserSsoPassword
-$vmName = $cbJson.vcenterSpec.vcenterHostname
-$portgroup1 = $cbJson.networkSpecs.portGroupKey[0]
-$portgroup2 = "VM Network"
-
-Function checkPowershellModules
-{
+Function checkPowershellModules {
     Try {
-        Write-LogMessage -Message "Importing Posh-SSH Module"
-        Import-Module -Name Posh-SSH -warningaction silentlycontinue | Out-File $logFile -Encoding ASCII -Append
-    }
-    Catch {
-        Write-LogMessage -Message "POSH-SSH Module not found. Installing"
-        Install-PackageProvider NuGet -Force | Out-File $logFile -Encoding ASCII -Append
-        Set-PSRepository PSGallery -InstallationPolicy Trusted | Out-File $logFile -Encoding ASCII -Append
-        if (([System.Environment]::OSVersion.Version.Build) -ge "17763") {
-            $getPackageManagementModule =  Get-InstalledModule -name PackageManagement -erroraction SilentlyContinue
-            if (!$getPackageManagementModule) {
-                Write-LogMessage -Message "In order to install the correct version of POSH-SSH, PackageManagement and PowerShellGet need to be installed first" -colour Yellow
-                Write-LogMessage -Message "Installing PackageManagement"
-                Install-Module -Name PackageManagement -Repository PSGallery -Force | Out-File $logFile -Encoding ASCII -Append
-                Write-LogMessage -Message "Installing PowerShellGet"
-                Install-Module -Name PowerShellGet -Repository PSGallery -Force | Out-File $logFile -Encoding ASCII -Append
-                Write-LogMessage -Message "Installing PowerShellGet requires that you close this powershell session and open a new one. This will only happen once." -colour Yellow
-                Exit    
-            }
-            Install-Module -Name Posh-SSH -AllowPrerelease | Out-File $logFile -Encoding ASCII -Append
+        $powerVcf = Get-InstalledModule -Name PowerVCF -ErrorAction SilentlyContinue
+        if ($powerVcf.Version -eq "2.1.1") {
+            Write-LogMessage -Message "Checking for PowerVCF Module"
+            Write-LogMessage -Message "PowerVCF Found"
         }
         else {
-            Install-Module -Name Posh-SSH -maximumversion 2.2 | Out-File $logFile -Encoding ASCII -Append
+            Install-PackageProvider NuGet -Force | Out-File $logFile -Encoding ASCII -Append
+            Set-PSRepository PSGallery -InstallationPolicy Trusted | Out-File $logFile -Encoding ASCII -Append
+            Install-Module PowerVCF -MinimumVersion 2.1.1 -Force -confirm:$false | Out-File $logFile -Encoding ASCII -Append
+            Write-LogMessage -Message "PowerVCF Module Not Found. Installing."  
         }
+    }
+    Catch {
+        Debug-CatchWriter -object $_
     }
 
     Write-LogMessage -Message "Importing PowerCLI Modules"
@@ -123,60 +95,53 @@ Function checkPowershellModules
         Install-Module -Name VMware.VimAutomation.Vds -confirm:$false | Out-File $logFile -Encoding ASCII -Append
     }
 
-    Try
-    {
-        LogMessage -message "Checking for PowerVCF Module"
-        $powerVcf = Get-InstalledModule -Name PowerVCF -ErrorAction SilentlyContinue
-        if ($powerVcf.Version -eq "2.1.0") {
-            LogMessage -message "PowerVCF Found"
-        }
-        else {
-            LogMessage -message "PowerVCF Module not found. Installing."
-            Install-PackageProvider NuGet -Force | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null
-            Set-PSRepository PSGallery -InstallationPolicy Trusted | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null
-            Install-Module PowerVCF -MinimumVersion 2.1.0 -Force -confirm:$false | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null   
-        }
-    }
-    Catch
-    {
-        catchwriter -object $_
-    }
-
     Write-LogMessage -Message "Configuring PowerShell CEIP Setting"
     $setCLIConfigurationCEIP = Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP $false -Confirm:$false -warningaction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -Encoding ASCII -Append
     Write-LogMessage -Message "Configuring PowerShell Certifcate Setting"
     $setCLIConfigurationCerts = Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$False -Scope AllUsers -warningaction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -Encoding ASCII -Append
-    Write-LogMessage -Message "Permitting Multiple Default VI Servers"
-    $setCLIConfigurationVIServers = Set-PowerCLIConfiguration -DefaultVIServerMode multiple -Confirm:$false -Scope AllUsers -warningaction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -Encoding ASCII -Append
 }
 
-Start-SetupLogFile -Path $PSScriptRoot -ScriptName "configureSingleVmnic" # Create new log
+Function updatePortgroup ($vmName, $oldPortgroup, $newPortgroup) {
+    Try {
+        Write-LogMessage -Message "Reconfigured Virtual Machine $vmName Port Group from $oldPortgroup to $newPortgroup"
+        Get-VM -Name $vmName | Get-NetworkAdapter | Where {$_.NetworkName -eq $oldPortgroup} | Set-NetworkAdapter -Portgroup $newPortgroup -Confirm:$False
+        Write-LogMessage -Message "Reconfigured Virtual Machine $vmName Port Group from $oldPortgroup to $newPortgroup Successfully" -Colour Green
+    }
+    Catch {
+        Debug-CatchWriter -object $_ 
+    }
+}
 
-Function Set-UpdatePortgroup {
-    Param (
-        [Parameter (Mandatory=$true)]
-            [ValidateNotNullOrEmpty()]
-            [string]$vmName,
-        [Parameter (Mandatory=$false)]
-            [ValidateNotNullOrEmpty()]
-            [string]$oldPortgroup,
-        [Parameter (Mandatory=$false)]
-            [ValidateNotNullOrEmpty()]
-            [string]$newPortgroup
-    )
+Function connectVsphere ($hostname, $user, $password) {
+    Try {
+        Write-LogMessage -Message "Connecting to vCenter/ESXi Server $hostname"
+        Connect-VIServer -Server $hostname -User $user -Password $password | Out-File $logFile -Encoding ASCII -Append
+        Write-LogMessage -Message "Connected to vCenter/ESXi Server $hostname successfully" -Colour Green
+    }
+    Catch {
+        Debug-CatchWriter -object $_ 
+    }
+}
 
-    Get-VM -Name $vmName | Get-NetworkAdapter | Where {$_.NetworkName -eq $oldPortgroup} | Set-NetworkAdapter -Portgroup $newPortgroup -Confirm:$False
+Function disconnectVsphere ($hostname) {
+    Try {
+        Write-LogMessage -Message "Disconnecting from vCenter/ESXi Server $hostname"
+        Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
+        Write-LogMessage -Message "Disconnected from vCenter/ESXi Server $hostname Successfully" -Colour Green
+    }
+    Catch {
+        Debug-CatchWriter -object $_ 
+    }
 }
 
 Function vCenterVss {
     Try {
         # Reconfigure vCenter Server Port Group from vSphere Distributed Switch back to vSphere Stadnard Switch
-        Write-LogMessage -Message "Connecting to ESXi Server $esxiHost"
-        Connect-VIServer -Server $esxiHost -User $esxiHostUser -Password $esxiHostPassword | Out-File $logFile -Encoding ASCII -Append
-        Write-LogMessage -Message "Reconfigure vCenter Serer $vCenterFqdn Port Group from $portgroup1 to $portgroup2"
-        Set-UpdatePortgroup -vmName $vmName -oldPortgroup $portgroup1 -newPortgroup $portgroup2 | Out-File $logFile -Encoding ASCII -Append
-        Write-LogMessage -Message "Disconnecting from ESXi Server $esxiHost"
-        Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
+        connectVsphere -hostname $esxiHost0 -user $esxiHostUser -password $esxiHostPassword
+        #Write-LogMessage -Message "Reconfigure vCenter Serer $vCenterFqdn Port Group from $portgroup1 to $portgroup2"
+        #Set-UpdatePortgroup -vmName $vmName -oldPortgroup $portgroup1 -newPortgroup $portgroup2 | Out-File $logFile -Encoding ASCII -Append
+        updatePortgroup -vmName "sfo-vcf01" -oldPortgroup $portgroup1 -newPortgroup $portgroup2
+        disconnectVsphere -hostname $esxiHost0
     }
     Catch {
         Debug-CatchWriter -object $_ 
@@ -197,26 +162,26 @@ Function rollbackFalse {
     }
 }
 
-Function vcenterReboot {
+Function rebootVcenter ($hostname, $user, $password) {
     Try {
-        Write-LogMessage -Message "Connecting to vCenter Server $vCenterFqdn to Reboot"
-        Connect-CisServer -Server $vCenterFqdn -User $vCenterAdminUser -Password $vCenterAdminPassword | Out-Null
-        $vamiShudownApi = Get-CisService -Server $vCenterFqdn -Name "com.vmware.appliance.shutdown"
+        Write-LogMessage -Message "Connecting to vCenter Server $hostname to Reboot"
+        Connect-CisServer -Server $hostname -User $user -Password $password | Out-Null
+        $vamiShudownApi = Get-CisService -Server $hostname -Name "com.vmware.appliance.shutdown"
         $vamiShudownApi.reboot(1,'Change Advanced Setting: config.vpxd.network.rollback')
 
-        Write-LogMessage -Message "Waiting for $vCenterFqdn to go down after after reboot"
-        do{}Until (!(Test-Connection -computername $vCenterFqdn -Quiet -Count 1))
-        Write-LogMessage -Message "IP connectivity to $vCenterFqdn lost (expected)"
+        Write-LogMessage -Message "Waiting for vCenter Server $hostname to go Down After Reboot Request"
+        do{}Until (!(Test-Connection -computername $hostname -Quiet -Count 1))
+        Write-LogMessage -Message "Connectivity to vCenter Server $hostname Lost (Expected)"
 
-        #Monitor for vCenter backup
-        Write-LogMessage -Message "Waiting for $vCenterFqdn to come back up after reboot"
-        do{}Until (Test-Connection -computername $vCenterFqdn -Quiet -Count 1)
-        Write-LogMessage -Message "IP connectivity to $vCenterFqdn established"
+        # Monitor for vCenter Server to Come Online
+        Write-LogMessage -Message "Waiting for vCenter Server $hostname to Come Back up After Reboot"
+        do{}Until (Test-Connection -computername $hostname -Quiet -Count 1)
+        Write-LogMessage -Message "Connectivity to vCenter Server $hostname Re-Established"
 
-        #Keep attempting to connect to vCenter until its it responds correctly (services may not be started first time)
-        Write-LogMessage -Message "Waiting for vCenter services to start on $vCenterFqdn (may take some time)"
-        Do {}Until (Connect-VIServer -Server $vCenterFqdn -User $vCenterAdminUser -Pass $vCenterAdminPassword -ErrorAction SilentlyContinue)
-        Write-LogMessage -Message "PowerCLI connection to $vCenterFqdn established"
+        # Keep Attempting to Connect to the vCenter Server Until it Responds Correctly
+        Write-LogMessage -Message "Waiting for vCenter Server Services to Start on $hostname (May Take Some Time)"
+        Do {}Until (Connect-VIServer -Server $hostname -User $user -Pass $password -ErrorAction SilentlyContinue)
+        Write-LogMessage -Message "Connection to vCenter Server $hostname Established"
         Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue | Out-Null
     }
     Catch {
@@ -588,11 +553,49 @@ Function migrateAllHosts {
     }
 }
 
-checkPowershellModules
-vCenterVss
-rollbackFalse
-vcenterReboot
-migrateNetworking
-vCenterVds
-PAUSE
-migrateAllHosts
+Try {
+    checkPowershellModules # Ensure PowerShell Modules are Installed (PowerVCF and PowerCLI)
+
+    Start-SetupLogFile -Path $PSScriptRoot -ScriptName "configureSingleVmnic" # Create new log
+
+    $jsonPath = $PSScriptRoot+"\"+$json
+    Write-LogMessage  -Message "Reading the Management Domain JSON Spec" -Colour Yellow
+    $Global:cbJson = (Get-Content -Raw $jsonPath) | ConvertFrom-Json
+
+    $esxiHostUser = $cbJson.hostSpecs.credentials.username[0]
+    $esxiHostPassword = $cbJson.hostSpecs.credentials.password[0]
+    $esxiHost0 = $cbJson.hostSpecs.hostname[0]+"."+$cbJson.dnsSpec.subdomain
+    $esxiHost1 = $cbJson.hostSpecs.hostname[1]+"."+$cbJson.dnsSpec.subdomain
+    $esxiHost2 = $cbJson.hostSpecs.hostname[2]+"."+$cbJson.dnsSpec.subdomain
+    $esxiHost3 = $cbJson.hostSpecs.hostname[3]+"."+$cbJson.dnsSpec.subdomain
+
+    $vCenterFqdn = $cbJson.vcenterSpec.vcenterHostname+'.'+$cbJson.dnsSpec.subdomain
+    $vCenterAdminUser = "administrator@vsphere.local"
+    $vCenterAdminPassword = $cbJson.pscSpecs.adminUserSsoPassword
+    $vmName = $cbJson.vcenterSpec.vcenterHostname
+    $portgroup1 = $cbJson.networkSpecs.portGroupKey[0]
+    $portgroup2 = "VM Network"
+
+    connectVsphere -hostname $esxiHost0 -user $esxiHostUser -password $esxiHostPassword # Connect to First ESXi Host
+    updatePortgroup -vmName $vmName -oldPortgroup $portgroup1 -newPortgroup $portgroup2 # Migrate vCenter Server from vDS to vSS
+    disconnectVsphere -hostname $esxiHost0 # Disconnect from First ESXi Host
+
+    #connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
+    #Get-AdvancedSetting -Entity $vCenterFqdn -Name config.vpxd.network.rollback | Set-AdvancedSetting -Value 'false' -Confirm:$false | Out-File $logFile -Encoding ASCII -Append # Set vCenter Advanced Setting config.vpxd.network.rollback to false
+    #disconnectVsphere -hostname $vCenterFqdn # Disconnect from First ESXi Host
+    #rollbackFalse
+
+    #rebootVcenter -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Reboot vCenter Server
+    ##migrateNetworking
+
+    #connectVsphere -hostname $esxiHost0 -user $esxiHostUser -password $esxiHostPassword # Connect to First ESXi Host
+    #updatePortgroup -vmName vmName -oldPortgroup $portgroup2 -newPortgroup $portgroup1 # Migrate vCenter Server from vSS to vDS
+    #disconnectVsphere -hostname $esxiHost0 # Disconnect from First ESXi Host
+    #vCenterVds
+
+    #PAUSE
+    #migrateAllHosts
+}
+Catch {
+    Debug-CatchWriter -object $_
+}
