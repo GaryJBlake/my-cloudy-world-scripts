@@ -16,6 +16,7 @@
 
     - 1.0.001 (Gary Blake / 2020-12-11) - Initial script creation
     - 1.0.002 (Gary Blake / 2020-12-12) - Updated all variables to be obtained from management domain spec
+                                        - Streamline use of code by adding reusable functions 
 
     ===============================================================================================================
     .DESCRIPTION
@@ -104,7 +105,7 @@ Function checkPowershellModules {
 Function updatePortgroup ($vmName, $oldPortgroup, $newPortgroup) {
     Try {
         Write-LogMessage -Message "Reconfigured Virtual Machine $vmName Port Group from $oldPortgroup to $newPortgroup"
-        Get-VM -Name $vmName | Get-NetworkAdapter | Where {$_.NetworkName -eq $oldPortgroup} | Set-NetworkAdapter -Portgroup $newPortgroup -Confirm:$False
+        Get-VM -Name $vmName | Get-NetworkAdapter | Where {$_.NetworkName -eq $oldPortgroup} | Set-NetworkAdapter -Portgroup $newPortgroup -Confirm:$False | Out-File $logFile -Encoding ASCII -Append
         Write-LogMessage -Message "Reconfigured Virtual Machine $vmName Port Group from $oldPortgroup to $newPortgroup Successfully" -Colour Green
     }
     Catch {
@@ -133,22 +134,6 @@ Function disconnectVsphere ($hostname) {
         Debug-CatchWriter -object $_ 
     }
 }
-
-<#
-Function rollbackFalse {
-    Try {
-        Write-LogMessage -Message "Connecting to vCenter Server $vCenterFqdn"
-        Connect-VIServer -Server $vCenterFqdn -User $vCenterAdminUser -Password $vCenterAdminPassword | Out-File $logFile -Encoding ASCII -Append
-        Write-LogMessage -Message "Setting vCenter Server $vCenterFqdn Advanced Setting"
-        Get-AdvancedSetting -Entity $vCenterFqdn -Name config.vpxd.network.rollback | Set-AdvancedSetting -Value 'false' -Confirm:$false | Out-File $logFile -Encoding ASCII -Append
-        Write-LogMessage -Message "Disconnecting from vCenter Server $vCenterFqdn"
-        Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
-    }
-    Catch {
-        Debug-CatchWriter -object $_ 
-    }
-}
-#>
 
 Function rebootVcenter ($hostname, $user, $password) {
     Try {
@@ -179,35 +164,20 @@ Function rebootVcenter ($hostname, $user, $password) {
 
 Function obtainDvsDetails {
     Try {
-        $Global:vds = Get-View -ViewType DistributedVirtualSwitch
-        $Global:dvsId = $vds.MoRef.Type+"-"+$vds.MoRef.Value
-        $Global:dvsPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"="DVUplinks"}
-        $Global:mgmtPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"=$portgroup1}
-        
-        #---------------QueryAvailableDvsSpec---------------
-        #$recommended = $true
-        #$_this = Get-View -Id 'DistributedVirtualSwitchManager-DVSManager'
-        #$_this.QueryAvailableDvsSpec($recommended) | Out-File $logFile -Encoding ASCII -Append
-
-        #---------------FetchDVPorts---------------
-        
-        #$criteria = New-Object VMware.Vim.DistributedVirtualSwitchPortCriteria
-        #$criteria.UplinkPort = $true
-        #$_this = Get-View -Id $dvsId
-        #$_this.FetchDVPorts($criteria) | Out-File $logFile -Encoding ASCII -Append
+        $vds = Get-View -ViewType DistributedVirtualSwitch
+        $dvsId = $vds.MoRef.Type+"-"+$vds.MoRef.Value
+        $dvsPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"="DVUplinks"}
+        $mgmtPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"=$portgroup1}
     }
     Catch {
         Debug-CatchWriter -object $_ 
     }
 }
 
-Function migrateNetworking {
-    Try {
-        Write-LogMessage -Message "Connecting to vCenter Server $vCenterFqdn"
-        Connect-VIServer -Server $vCenterFqdn -User $vCenterAdminUser -Password $vCenterAdminPassword | Out-File $logFile -Encoding ASCII -Append
-        
+Function migrateNetworking ($updateHost, $nic0, $portKey0, $nic1, $portkey1) {
+    Try {     
         #---------------UpdateNetworkConfig---------------
-        $hostDetail0 = Get-View -ViewType HostSystem -Filter @{"Name"=$esxiHost0}
+        $hostDetail0 = Get-View -ViewType HostSystem -Filter @{"Name"=$updateHost}
         $hostId0 = 'HostNetworkSystem-networkSystem-'+$hostDetail0.MoRef.Value.Split("-")[1]
 
         $config = New-Object VMware.Vim.HostNetworkConfig
@@ -264,286 +234,30 @@ Function migrateNetworking {
         $config.ProxySwitch[0].ChangeOperation = 'edit'
         $config.ProxySwitch[0].Spec = New-Object VMware.Vim.HostProxySwitchSpec
         $config.ProxySwitch[0].Spec.Backing = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicBacking
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec[] (1)
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0] = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].PnicDevice = 'vmnic0'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].UplinkPortKey = '16'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].UplinkPortgroupKey = $dvsPortgroup.Key
+
+        if ($firstHost -eq "true") {
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec[] (1)
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec[0] = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].PnicDevice = $nic0
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].UplinkPortKey = $portKey0
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].UplinkPortgroupKey = $dvsPortgroup.Key
+        }
+        else {
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec[] (2)
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec[0] = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].PnicDevice = $nic1
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].UplinkPortKey = $portkey1
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].UplinkPortgroupKey = $dvsPortgroup.Key
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec[1] = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec[1].PnicDevice = $nic0
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec[1].UplinkPortKey = $portkey0
+            $config.ProxySwitch[0].Spec.Backing.PnicSpec[1].UplinkPortgroupKey = $dvsPortgroup.Key
+        }
         $changeMode = 'modify'
         
         $_this = Get-View -Id $hostId0
-        Write-LogMessage -Message "Migrating Network Configuration for $esxiHost0"
+        Write-LogMessage -Message "Migrating Network Configuration for $updateHost"
         $_this.UpdateNetworkConfig($config, $changeMode) | Out-File $logFile -Encoding ASCII -Append
-
-        Write-LogMessage -Message "Disconnecting from vCenter Server $vCenterFqdn"
-        Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
-    }
-    Catch {
-        Debug-CatchWriter -object $_ 
-    }
-}
-
-Function vCenterVds {
-    Try {
-        # Reconfigure vCenter Server Port Group from vSphere Distributed Switch back to vSphere Stadnard Switch
-        Write-LogMessage -Message "Connecting to ESXi Server $esxiHost"
-        Connect-VIServer -Server $esxiHost -User $esxiHostUser -Password $esxiHostPassword | Out-File $logFile -Encoding ASCII -Append
-        Write-LogMessage -Message "Reconfigure vCenter Serer $vCenterFqdn Port Group from $portgroup2 to $portgroup1"
-        Set-UpdatePortgroup -vmName $vmName -oldPortgroup $portgroup2 -newPortgroup $portgroup1 | Out-File $logFile -Encoding ASCII -Append
-        Write-LogMessage -Message "Disconnecting from ESXi Server $esxiHost"
-        Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
-    }
-    Catch {
-        Debug-CatchWriter -object $_ 
-    }
-}
-
-Function migrateAllHosts {
-    Try {
-        Write-LogMessage -Message "Connecting to vCenter Server $vCenterFqdn"
-        Connect-VIServer -Server $vCenterFqdn -User $vCenterAdminUser -Password $vCenterAdminPassword | Out-File $logFile -Encoding ASCII -Append
-        
-        <#
-        $vds = Get-View -ViewType DistributedVirtualSwitch
-        $dvsId = $vds.MoRef.Type+"-"+$vds.MoRef.Value
-        $dvsPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"="DVUplinks"}
-        $mgmtPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"=$portgroup1}
-        
-        
-        #---------------QueryAvailableDvsSpec---------------
-        $recommended = $true
-        $_this = Get-View -Id 'DistributedVirtualSwitchManager-DVSManager'
-        $_this.QueryAvailableDvsSpec($recommended) | Out-File $logFile -Encoding ASCII -Append
-
-        #---------------FetchDVPorts---------------
-        
-        $criteria = New-Object VMware.Vim.DistributedVirtualSwitchPortCriteria
-        $criteria.UplinkPort = $true
-        $_this = Get-View -Id $dvsId
-        $_this.FetchDVPorts($criteria) | Out-File $logFile -Encoding ASCII -Append
-        #>
-
-        #---------------UpdateNetworkConfig---------------
-        $hostDetail1 = Get-View -ViewType HostSystem -Filter @{"Name"=$esxiHost1}
-        $hostId1 = 'HostNetworkSystem-networkSystem-'+$hostDetail1.MoRef.Value.Split("-")[1]
-
-        $config = New-Object VMware.Vim.HostNetworkConfig
-        $config.Vswitch = New-Object VMware.Vim.HostVirtualSwitchConfig[] (1)
-        $config.Vswitch[0] = New-Object VMware.Vim.HostVirtualSwitchConfig
-        $config.Vswitch[0].Name = 'vSwitch0'
-        $config.Vswitch[0].ChangeOperation = 'edit'
-        $config.Vswitch[0].Spec = New-Object VMware.Vim.HostVirtualSwitchSpec
-        $config.Vswitch[0].Spec.NumPorts = 128
-        $config.Vswitch[0].Spec.Policy = New-Object VMware.Vim.HostNetworkPolicy
-        $config.Vswitch[0].Spec.Policy.Security = New-Object VMware.Vim.HostNetworkSecurityPolicy
-        $config.Vswitch[0].Spec.Policy.Security.AllowPromiscuous = $false
-        $config.Vswitch[0].Spec.Policy.Security.ForgedTransmits = $false
-        $config.Vswitch[0].Spec.Policy.Security.MacChanges = $false
-        $config.Vswitch[0].Spec.Policy.OffloadPolicy = New-Object VMware.Vim.HostNetOffloadCapabilities
-        $config.Vswitch[0].Spec.Policy.OffloadPolicy.TcpSegmentation = $true
-        $config.Vswitch[0].Spec.Policy.OffloadPolicy.ZeroCopyXmit = $true
-        $config.Vswitch[0].Spec.Policy.OffloadPolicy.CsumOffload = $true
-        $config.Vswitch[0].Spec.Policy.ShapingPolicy = New-Object VMware.Vim.HostNetworkTrafficShapingPolicy
-        $config.Vswitch[0].Spec.Policy.ShapingPolicy.Enabled = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming = New-Object VMware.Vim.HostNicTeamingPolicy
-        $config.Vswitch[0].Spec.Policy.NicTeaming.NotifySwitches = $true
-        $config.Vswitch[0].Spec.Policy.NicTeaming.RollingOrder = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria = New-Object VMware.Vim.HostNicFailureCriteria
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.FullDuplex = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.Percentage = 0
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.CheckErrorPercent = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.CheckDuplex = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.CheckBeacon = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.Speed = 10
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.CheckSpeed = 'minimum'
-        $config.Vswitch[0].Spec.Policy.NicTeaming.Policy = 'loadbalance_srcid'
-        $config.Vswitch[0].Spec.Policy.NicTeaming.ReversePolicy = $true
-        $config.Portgroup = New-Object VMware.Vim.HostPortGroupConfig[] (1)
-        $config.Portgroup[0] = New-Object VMware.Vim.HostPortGroupConfig
-        $config.Portgroup[0].ChangeOperation = 'remove'
-        $config.Portgroup[0].Spec = New-Object VMware.Vim.HostPortGroupSpec
-        $config.Portgroup[0].Spec.VswitchName = ''
-        $config.Portgroup[0].Spec.VlanId = -1
-        $config.Portgroup[0].Spec.Name = 'Management Network'
-        $config.Portgroup[0].Spec.Policy = New-Object VMware.Vim.HostNetworkPolicy
-        $config.Vnic = New-Object VMware.Vim.HostVirtualNicConfig[] (1)
-        $config.Vnic[0] = New-Object VMware.Vim.HostVirtualNicConfig
-        $config.Vnic[0].Portgroup = ''
-        $config.Vnic[0].Device = 'vmk0'
-        $config.Vnic[0].ChangeOperation = 'edit'
-        $config.Vnic[0].Spec = New-Object VMware.Vim.HostVirtualNicSpec
-        $config.Vnic[0].Spec.DistributedVirtualPort = New-Object VMware.Vim.DistributedVirtualSwitchPortConnection
-        $config.Vnic[0].Spec.DistributedVirtualPort.SwitchUuid =  $vds.Uuid
-        $config.Vnic[0].Spec.DistributedVirtualPort.PortgroupKey = $mgmtPortgroup.Key
-        $config.ProxySwitch = New-Object VMware.Vim.HostProxySwitchConfig[] (1)
-        $config.ProxySwitch[0] = New-Object VMware.Vim.HostProxySwitchConfig
-        $config.ProxySwitch[0].Uuid =  $vds.Uuid
-        $config.ProxySwitch[0].ChangeOperation = 'edit'
-        $config.ProxySwitch[0].Spec = New-Object VMware.Vim.HostProxySwitchSpec
-        $config.ProxySwitch[0].Spec.Backing = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicBacking
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec[] (2)
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0] = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].PnicDevice = 'vmnic2'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].UplinkPortKey = '19'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].UplinkPortgroupKey = $dvsPortgroup.Key
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[1] = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[1].PnicDevice = 'vmnic0'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[1].UplinkPortKey = '18'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[1].UplinkPortgroupKey = $dvsPortgroup.Key
-        $changeMode = 'modify'
-        
-        $_this = Get-View -Id $hostId1
-        Write-LogMessage -Message "Migrating Network Configuration for $esxiHost1"
-        $_this.UpdateNetworkConfig($config, $changeMode) | Out-File $logFile -Encoding ASCII -Append
-
-        #---------------UpdateNetworkConfig---------------
-        $hostDetail2 = Get-View -ViewType HostSystem -Filter @{"Name"=$esxiHost2}
-        $hostId2 = 'HostNetworkSystem-networkSystem-'+$hostDetail2.MoRef.Value.Split("-")[1]
-
-        $config = New-Object VMware.Vim.HostNetworkConfig
-        $config.Vswitch = New-Object VMware.Vim.HostVirtualSwitchConfig[] (1)
-        $config.Vswitch[0] = New-Object VMware.Vim.HostVirtualSwitchConfig
-        $config.Vswitch[0].Name = 'vSwitch0'
-        $config.Vswitch[0].ChangeOperation = 'edit'
-        $config.Vswitch[0].Spec = New-Object VMware.Vim.HostVirtualSwitchSpec
-        $config.Vswitch[0].Spec.NumPorts = 128
-        $config.Vswitch[0].Spec.Policy = New-Object VMware.Vim.HostNetworkPolicy
-        $config.Vswitch[0].Spec.Policy.Security = New-Object VMware.Vim.HostNetworkSecurityPolicy
-        $config.Vswitch[0].Spec.Policy.Security.AllowPromiscuous = $false
-        $config.Vswitch[0].Spec.Policy.Security.ForgedTransmits = $false
-        $config.Vswitch[0].Spec.Policy.Security.MacChanges = $false
-        $config.Vswitch[0].Spec.Policy.OffloadPolicy = New-Object VMware.Vim.HostNetOffloadCapabilities
-        $config.Vswitch[0].Spec.Policy.OffloadPolicy.TcpSegmentation = $true
-        $config.Vswitch[0].Spec.Policy.OffloadPolicy.ZeroCopyXmit = $true
-        $config.Vswitch[0].Spec.Policy.OffloadPolicy.CsumOffload = $true
-        $config.Vswitch[0].Spec.Policy.ShapingPolicy = New-Object VMware.Vim.HostNetworkTrafficShapingPolicy
-        $config.Vswitch[0].Spec.Policy.ShapingPolicy.Enabled = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming = New-Object VMware.Vim.HostNicTeamingPolicy
-        $config.Vswitch[0].Spec.Policy.NicTeaming.NotifySwitches = $true
-        $config.Vswitch[0].Spec.Policy.NicTeaming.RollingOrder = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria = New-Object VMware.Vim.HostNicFailureCriteria
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.FullDuplex = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.Percentage = 0
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.CheckErrorPercent = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.CheckDuplex = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.CheckBeacon = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.Speed = 10
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.CheckSpeed = 'minimum'
-        $config.Vswitch[0].Spec.Policy.NicTeaming.Policy = 'loadbalance_srcid'
-        $config.Vswitch[0].Spec.Policy.NicTeaming.ReversePolicy = $true
-        $config.Portgroup = New-Object VMware.Vim.HostPortGroupConfig[] (1)
-        $config.Portgroup[0] = New-Object VMware.Vim.HostPortGroupConfig
-        $config.Portgroup[0].ChangeOperation = 'remove'
-        $config.Portgroup[0].Spec = New-Object VMware.Vim.HostPortGroupSpec
-        $config.Portgroup[0].Spec.VswitchName = ''
-        $config.Portgroup[0].Spec.VlanId = -1
-        $config.Portgroup[0].Spec.Name = 'Management Network'
-        $config.Portgroup[0].Spec.Policy = New-Object VMware.Vim.HostNetworkPolicy
-        $config.Vnic = New-Object VMware.Vim.HostVirtualNicConfig[] (1)
-        $config.Vnic[0] = New-Object VMware.Vim.HostVirtualNicConfig
-        $config.Vnic[0].Portgroup = ''
-        $config.Vnic[0].Device = 'vmk0'
-        $config.Vnic[0].ChangeOperation = 'edit'
-        $config.Vnic[0].Spec = New-Object VMware.Vim.HostVirtualNicSpec
-        $config.Vnic[0].Spec.DistributedVirtualPort = New-Object VMware.Vim.DistributedVirtualSwitchPortConnection
-        $config.Vnic[0].Spec.DistributedVirtualPort.SwitchUuid =  $vds.Uuid
-        $config.Vnic[0].Spec.DistributedVirtualPort.PortgroupKey = $mgmtPortgroup.Key
-        $config.ProxySwitch = New-Object VMware.Vim.HostProxySwitchConfig[] (1)
-        $config.ProxySwitch[0] = New-Object VMware.Vim.HostProxySwitchConfig
-        $config.ProxySwitch[0].Uuid =  $vds.Uuid
-        $config.ProxySwitch[0].ChangeOperation = 'edit'
-        $config.ProxySwitch[0].Spec = New-Object VMware.Vim.HostProxySwitchSpec
-        $config.ProxySwitch[0].Spec.Backing = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicBacking
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec[] (2)
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0] = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].PnicDevice = 'vmnic2'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].UplinkPortKey = '21'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].UplinkPortgroupKey = $dvsPortgroup.Key
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[1] = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[1].PnicDevice = 'vmnic0'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[1].UplinkPortKey = '20'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[1].UplinkPortgroupKey = $dvsPortgroup.Key
-        $changeMode = 'modify'
-        
-        $_this = Get-View -Id $hostId2
-        Write-LogMessage -Message "Migrating Network Configuration for $esxiHost2"
-        $_this.UpdateNetworkConfig($config, $changeMode) | Out-File $logFile -Encoding ASCII -Append
-
-        #---------------UpdateNetworkConfig---------------
-        $hostDetail3 = Get-View -ViewType HostSystem -Filter @{"Name"=$esxiHost3}
-        $hostId3 = 'HostNetworkSystem-networkSystem-'+$hostDetail3.MoRef.Value.Split("-")[1]
-
-        $config = New-Object VMware.Vim.HostNetworkConfig
-        $config.Vswitch = New-Object VMware.Vim.HostVirtualSwitchConfig[] (1)
-        $config.Vswitch[0] = New-Object VMware.Vim.HostVirtualSwitchConfig
-        $config.Vswitch[0].Name = 'vSwitch0'
-        $config.Vswitch[0].ChangeOperation = 'edit'
-        $config.Vswitch[0].Spec = New-Object VMware.Vim.HostVirtualSwitchSpec
-        $config.Vswitch[0].Spec.NumPorts = 128
-        $config.Vswitch[0].Spec.Policy = New-Object VMware.Vim.HostNetworkPolicy
-        $config.Vswitch[0].Spec.Policy.Security = New-Object VMware.Vim.HostNetworkSecurityPolicy
-        $config.Vswitch[0].Spec.Policy.Security.AllowPromiscuous = $false
-        $config.Vswitch[0].Spec.Policy.Security.ForgedTransmits = $false
-        $config.Vswitch[0].Spec.Policy.Security.MacChanges = $false
-        $config.Vswitch[0].Spec.Policy.OffloadPolicy = New-Object VMware.Vim.HostNetOffloadCapabilities
-        $config.Vswitch[0].Spec.Policy.OffloadPolicy.TcpSegmentation = $true
-        $config.Vswitch[0].Spec.Policy.OffloadPolicy.ZeroCopyXmit = $true
-        $config.Vswitch[0].Spec.Policy.OffloadPolicy.CsumOffload = $true
-        $config.Vswitch[0].Spec.Policy.ShapingPolicy = New-Object VMware.Vim.HostNetworkTrafficShapingPolicy
-        $config.Vswitch[0].Spec.Policy.ShapingPolicy.Enabled = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming = New-Object VMware.Vim.HostNicTeamingPolicy
-        $config.Vswitch[0].Spec.Policy.NicTeaming.NotifySwitches = $true
-        $config.Vswitch[0].Spec.Policy.NicTeaming.RollingOrder = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria = New-Object VMware.Vim.HostNicFailureCriteria
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.FullDuplex = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.Percentage = 0
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.CheckErrorPercent = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.CheckDuplex = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.CheckBeacon = $false
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.Speed = 10
-        $config.Vswitch[0].Spec.Policy.NicTeaming.FailureCriteria.CheckSpeed = 'minimum'
-        $config.Vswitch[0].Spec.Policy.NicTeaming.Policy = 'loadbalance_srcid'
-        $config.Vswitch[0].Spec.Policy.NicTeaming.ReversePolicy = $true
-        $config.Portgroup = New-Object VMware.Vim.HostPortGroupConfig[] (1)
-        $config.Portgroup[0] = New-Object VMware.Vim.HostPortGroupConfig
-        $config.Portgroup[0].ChangeOperation = 'remove'
-        $config.Portgroup[0].Spec = New-Object VMware.Vim.HostPortGroupSpec
-        $config.Portgroup[0].Spec.VswitchName = ''
-        $config.Portgroup[0].Spec.VlanId = -1
-        $config.Portgroup[0].Spec.Name = 'Management Network'
-        $config.Portgroup[0].Spec.Policy = New-Object VMware.Vim.HostNetworkPolicy
-        $config.Vnic = New-Object VMware.Vim.HostVirtualNicConfig[] (1)
-        $config.Vnic[0] = New-Object VMware.Vim.HostVirtualNicConfig
-        $config.Vnic[0].Portgroup = ''
-        $config.Vnic[0].Device = 'vmk0'
-        $config.Vnic[0].ChangeOperation = 'edit'
-        $config.Vnic[0].Spec = New-Object VMware.Vim.HostVirtualNicSpec
-        $config.Vnic[0].Spec.DistributedVirtualPort = New-Object VMware.Vim.DistributedVirtualSwitchPortConnection
-        $config.Vnic[0].Spec.DistributedVirtualPort.SwitchUuid =  $vds.Uuid
-        $config.Vnic[0].Spec.DistributedVirtualPort.PortgroupKey = $mgmtPortgroup.Key
-        $config.ProxySwitch = New-Object VMware.Vim.HostProxySwitchConfig[] (1)
-        $config.ProxySwitch[0] = New-Object VMware.Vim.HostProxySwitchConfig
-        $config.ProxySwitch[0].Uuid =  $vds.Uuid
-        $config.ProxySwitch[0].ChangeOperation = 'edit'
-        $config.ProxySwitch[0].Spec = New-Object VMware.Vim.HostProxySwitchSpec
-        $config.ProxySwitch[0].Spec.Backing = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicBacking
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec[] (2)
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0] = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].PnicDevice = 'vmnic2'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].UplinkPortKey = '23'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[0].UplinkPortgroupKey = $dvsPortgroup.Key
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[1] = New-Object VMware.Vim.DistributedVirtualSwitchHostMemberPnicSpec
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[1].PnicDevice = 'vmnic0'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[1].UplinkPortKey = '22'
-        $config.ProxySwitch[0].Spec.Backing.PnicSpec[1].UplinkPortgroupKey = $dvsPortgroup.Key
-        $changeMode = 'modify'
-        
-        $_this = Get-View -Id $hostId3
-        Write-LogMessage -Message "Migrating Network Configuration for $esxiHost3"
-        $_this.UpdateNetworkConfig($config, $changeMode) | Out-File $logFile -Encoding ASCII -Append
-
-        Write-LogMessage -Message "Disconnecting from vCenter Server $vCenterFqdn"
-        Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
     }
     Catch {
         Debug-CatchWriter -object $_ 
@@ -591,19 +305,43 @@ Try {
         rebootVcenter -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Reboot vCenter Server
     }
     else {
+        Write-LogMessage  -Message "Connection Attempt to $vCenterFqdn Failed" -Colour Red
+        Exit
+    }
+
+    connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
+    if ($DefaultVIServer.Name -eq $vCenterFqdn) {
+        $firstHost = "true"
+        Start-Job -ScriptBlock {migrateNetworking -updateHost $esxiHost0 -nic0 "vmnic0" -portKey0 "16"} # Update First Host Network Configuration
+        disconnectVsphere -hostname $vCenterFqdn # Disconnect from First ESXi Host
+    }
+    else {
+        Write-LogMessage  -Message "Connection Attempt to $vCenterFqdn Failed" -Colour Red
+        Exit
+    }
+
+    connectVsphere -hostname $esxiHost0 -user $esxiHostUser -password $esxiHostPassword # Connect to First ESXi Host
+    if ($DefaultVIServer.Name -eq $esxiHost0) {
+        updatePortgroup -vmName $vmName -oldPortgroup $portgroup2 -newPortgroup $portgroup1 # Migrate vCenter Server from vSS to vDS
+        disconnectVsphere -hostname $esxiHost0 # Disconnect from First ESXi Host
+    }
+    else {
         Write-LogMessage  -Message "Connection Attempt to $esxiHost0 Failed" -Colour Red
         Exit
     }
 
-    ##migrateNetworking
-
-    #connectVsphere -hostname $esxiHost0 -user $esxiHostUser -password $esxiHostPassword # Connect to First ESXi Host
-    #updatePortgroup -vmName vmName -oldPortgroup $portgroup2 -newPortgroup $portgroup1 # Migrate vCenter Server from vSS to vDS
-    #disconnectVsphere -hostname $esxiHost0 # Disconnect from First ESXi Host
-    #vCenterVds
-
-    #PAUSE
-    #migrateAllHosts
+    connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
+    if ($DefaultVIServer.Name -eq $vCenterFqdn) {
+        $firstHost = "false"
+        migrateNetworking -updateHost $esxiHost1 -nic0 "vmnic2" -portKey0 "19" -nic1 "vmnic0" -portKey1 "18" # Update Second Host Network Configuration
+        migrateNetworking -updateHost $esxiHost2 -nic0 "vmnic2" -portKey0 "21" -nic1 "vmnic0" -portKey1 "20" # Update Third Host Network Configuration
+        migrateNetworking -updateHost $esxiHost3 -nic0 "vmnic2" -portKey0 "23" -nic1 "vmnic0" -portKey1 "22" # Update Fourth Host Network Configuration
+        disconnectVsphere -hostname $vCenterFqdn # Disconnect from First ESXi Host
+    }
+    else {
+        Write-LogMessage  -Message "Connection Attempt to $vCenterFqdn Failed" -Colour Red
+        Exit
+    }
 }
 Catch {
     Debug-CatchWriter -object $_
