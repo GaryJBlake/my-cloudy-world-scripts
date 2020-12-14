@@ -134,6 +134,7 @@ Function disconnectVsphere ($hostname) {
     }
 }
 
+<#
 Function rollbackFalse {
     Try {
         Write-LogMessage -Message "Connecting to vCenter Server $vCenterFqdn"
@@ -147,6 +148,7 @@ Function rollbackFalse {
         Debug-CatchWriter -object $_ 
     }
 }
+#>
 
 Function rebootVcenter ($hostname, $user, $password) {
     Try {
@@ -175,28 +177,35 @@ Function rebootVcenter ($hostname, $user, $password) {
     }
 }
 
+Function obtainDvsDetails {
+    Try {
+        $Global:vds = Get-View -ViewType DistributedVirtualSwitch
+        $Global:dvsId = $vds.MoRef.Type+"-"+$vds.MoRef.Value
+        $Global:dvsPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"="DVUplinks"}
+        $Global:mgmtPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"=$portgroup1}
+        
+        #---------------QueryAvailableDvsSpec---------------
+        #$recommended = $true
+        #$_this = Get-View -Id 'DistributedVirtualSwitchManager-DVSManager'
+        #$_this.QueryAvailableDvsSpec($recommended) | Out-File $logFile -Encoding ASCII -Append
+
+        #---------------FetchDVPorts---------------
+        
+        #$criteria = New-Object VMware.Vim.DistributedVirtualSwitchPortCriteria
+        #$criteria.UplinkPort = $true
+        #$_this = Get-View -Id $dvsId
+        #$_this.FetchDVPorts($criteria) | Out-File $logFile -Encoding ASCII -Append
+    }
+    Catch {
+        Debug-CatchWriter -object $_ 
+    }
+}
+
 Function migrateNetworking {
     Try {
         Write-LogMessage -Message "Connecting to vCenter Server $vCenterFqdn"
         Connect-VIServer -Server $vCenterFqdn -User $vCenterAdminUser -Password $vCenterAdminPassword | Out-File $logFile -Encoding ASCII -Append
         
-        $vds = Get-View -ViewType DistributedVirtualSwitch
-        $dvsId = $vds.MoRef.Type+"-"+$vds.MoRef.Value
-        $dvsPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"="DVUplinks"}
-        $mgmtPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"=$portgroup1}
-        
-        #---------------QueryAvailableDvsSpec---------------
-        $recommended = $true
-        $_this = Get-View -Id 'DistributedVirtualSwitchManager-DVSManager'
-        $_this.QueryAvailableDvsSpec($recommended) | Out-File $logFile -Encoding ASCII -Append
-
-        #---------------FetchDVPorts---------------
-        
-        $criteria = New-Object VMware.Vim.DistributedVirtualSwitchPortCriteria
-        $criteria.UplinkPort = $true
-        $_this = Get-View -Id $dvsId
-        $_this.FetchDVPorts($criteria) | Out-File $logFile -Encoding ASCII -Append
-
         #---------------UpdateNetworkConfig---------------
         $hostDetail0 = Get-View -ViewType HostSystem -Filter @{"Name"=$esxiHost0}
         $hostId0 = 'HostNetworkSystem-networkSystem-'+$hostDetail0.MoRef.Value.Split("-")[1]
@@ -294,6 +303,7 @@ Function migrateAllHosts {
         Write-LogMessage -Message "Connecting to vCenter Server $vCenterFqdn"
         Connect-VIServer -Server $vCenterFqdn -User $vCenterAdminUser -Password $vCenterAdminPassword | Out-File $logFile -Encoding ASCII -Append
         
+        <#
         $vds = Get-View -ViewType DistributedVirtualSwitch
         $dvsId = $vds.MoRef.Type+"-"+$vds.MoRef.Value
         $dvsPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"="DVUplinks"}
@@ -311,6 +321,7 @@ Function migrateAllHosts {
         $criteria.UplinkPort = $true
         $_this = Get-View -Id $dvsId
         $_this.FetchDVPorts($criteria) | Out-File $logFile -Encoding ASCII -Append
+        #>
 
         #---------------UpdateNetworkConfig---------------
         $hostDetail1 = Get-View -ViewType HostSystem -Filter @{"Name"=$esxiHost1}
@@ -575,14 +586,15 @@ Try {
     connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
     if ($DefaultVIServer.Name -eq $vCenterFqdn) {
         Get-AdvancedSetting -Entity $vCenterFqdn -Name config.vpxd.network.rollback | Set-AdvancedSetting -Value 'false' -Confirm:$false | Out-File $logFile -Encoding ASCII -Append # Set vCenter Advanced Setting config.vpxd.network.rollback to false
+        obtainDvsDetails # Gather vDS Details
         disconnectVsphere -hostname $vCenterFqdn # Disconnect from First ESXi Host
+        rebootVcenter -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Reboot vCenter Server
     }
     else {
         Write-LogMessage  -Message "Connection Attempt to $esxiHost0 Failed" -Colour Red
         Exit
     }
 
-    #rebootVcenter -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Reboot vCenter Server
     ##migrateNetworking
 
     #connectVsphere -hostname $esxiHost0 -user $esxiHostUser -password $esxiHostPassword # Connect to First ESXi Host
