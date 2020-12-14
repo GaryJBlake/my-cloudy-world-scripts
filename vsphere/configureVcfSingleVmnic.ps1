@@ -44,6 +44,7 @@ Function checkPowershellModules {
     Try {
         $powerVcf = Get-InstalledModule -Name PowerVCF -ErrorAction SilentlyContinue
         if ($powerVcf.Version -eq "2.1.1") {
+            Start-SetupLogFile -Path $PSScriptRoot -ScriptName "configureSingleVmnic" # Create new log
             Write-LogMessage -Message "Checking for PowerVCF Module"
             Write-LogMessage -Message "PowerVCF Found"
         }
@@ -97,15 +98,15 @@ Function checkPowershellModules {
     }
 
     Write-LogMessage -Message "Configuring PowerShell CEIP Setting"
-    $setCLIConfigurationCEIP = Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP $false -Confirm:$false -warningaction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -Encoding ASCII -Append
+    $setCLIConfigurationCEIP = Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP $false -Confirm:$false -WarningAction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -Encoding ASCII -Append
     Write-LogMessage -Message "Configuring PowerShell Certifcate Setting"
-    $setCLIConfigurationCerts = Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$False -Scope AllUsers -warningaction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -Encoding ASCII -Append
+    $setCLIConfigurationCerts = Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$False -Scope AllUsers -WarningAction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -Encoding ASCII -Append
 }
 
 Function updatePortgroup ($vmName, $oldPortgroup, $newPortgroup) {
     Try {
         Write-LogMessage -Message "Reconfigured Virtual Machine $vmName Port Group from $oldPortgroup to $newPortgroup"
-        Get-VM -Name $vmName | Get-NetworkAdapter | Where {$_.NetworkName -eq $oldPortgroup} | Set-NetworkAdapter -Portgroup $newPortgroup -Confirm:$False | Out-File $logFile -Encoding ASCII -Append
+        Get-VM -Name $vmName | Get-NetworkAdapter | Where {$_.NetworkName -eq $oldPortgroup} | Set-NetworkAdapter -Portgroup $newPortgroup -Confirm:$False -ErrorAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
         Write-LogMessage -Message "Reconfigured Virtual Machine $vmName Port Group from $oldPortgroup to $newPortgroup Successfully" -Colour Green
     }
     Catch {
@@ -164,10 +165,10 @@ Function rebootVcenter ($hostname, $user, $password) {
 
 Function obtainDvsDetails {
     Try {
-        $vds = Get-View -ViewType DistributedVirtualSwitch
-        $dvsId = $vds.MoRef.Type+"-"+$vds.MoRef.Value
-        $dvsPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"="DVUplinks"}
-        $mgmtPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"=$portgroup1}
+        $Global:vds = Get-View -ViewType DistributedVirtualSwitch
+        $Global:dvsId = $vds.MoRef.Type+"-"+$vds.MoRef.Value
+        $Global:dvsPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"="DVUplinks"}
+        $Global:mgmtPortgroup = Get-View -ViewType DistributedVirtualPortgroup -Filter @{"Name"=$portgroup1}
     }
     Catch {
         Debug-CatchWriter -object $_ 
@@ -177,10 +178,10 @@ Function obtainDvsDetails {
 Function migrateNetworking ($updateHost, $nic0, $portKey0, $nic1, $portkey1) {
     Try {     
         #---------------UpdateNetworkConfig---------------
-        $hostDetail0 = Get-View -ViewType HostSystem -Filter @{"Name"=$updateHost}
-        $hostId0 = 'HostNetworkSystem-networkSystem-'+$hostDetail0.MoRef.Value.Split("-")[1]
+        $Global:hostDetail0 = Get-View -ViewType HostSystem -Filter @{"Name"=$updateHost}
+        $Global:hostId0 = 'HostNetworkSystem-networkSystem-'+$hostDetail0.MoRef.Value.Split("-")[1]
 
-        $config = New-Object VMware.Vim.HostNetworkConfig
+        $Global:config = New-Object VMware.Vim.HostNetworkConfig
         $config.Vswitch = New-Object VMware.Vim.HostVirtualSwitchConfig[] (1)
         $config.Vswitch[0] = New-Object VMware.Vim.HostVirtualSwitchConfig
         $config.Vswitch[0].Name = 'vSwitch0'
@@ -267,25 +268,23 @@ Function migrateNetworking ($updateHost, $nic0, $portKey0, $nic1, $portkey1) {
 Try {
     checkPowershellModules # Ensure PowerShell Modules are Installed (PowerVCF and PowerCLI)
 
-    Start-SetupLogFile -Path $PSScriptRoot -ScriptName "configureSingleVmnic" # Create new log
-
     $jsonPath = $PSScriptRoot+"\"+$json
     Write-LogMessage  -Message "Reading the Management Domain JSON Spec" -Colour Yellow
     $Global:cbJson = (Get-Content -Raw $jsonPath) | ConvertFrom-Json
 
-    $esxiHostUser = $cbJson.hostSpecs.credentials.username[0]
-    $esxiHostPassword = $cbJson.hostSpecs.credentials.password[0]
-    $esxiHost0 = $cbJson.hostSpecs.hostname[0]+"."+$cbJson.dnsSpec.subdomain
-    $esxiHost1 = $cbJson.hostSpecs.hostname[1]+"."+$cbJson.dnsSpec.subdomain
-    $esxiHost2 = $cbJson.hostSpecs.hostname[2]+"."+$cbJson.dnsSpec.subdomain
-    $esxiHost3 = $cbJson.hostSpecs.hostname[3]+"."+$cbJson.dnsSpec.subdomain
+    $Global:esxiHostUser = $cbJson.hostSpecs.credentials.username[0]
+    $Global:esxiHostPassword = $cbJson.hostSpecs.credentials.password[0]
+    $Global:esxiHost0 = $cbJson.hostSpecs.hostname[0]+"."+$cbJson.dnsSpec.subdomain
+    $Global:esxiHost1 = $cbJson.hostSpecs.hostname[1]+"."+$cbJson.dnsSpec.subdomain
+    $Global:esxiHost2 = $cbJson.hostSpecs.hostname[2]+"."+$cbJson.dnsSpec.subdomain
+    $Global:esxiHost3 = $cbJson.hostSpecs.hostname[3]+"."+$cbJson.dnsSpec.subdomain
 
-    $vCenterFqdn = $cbJson.vcenterSpec.vcenterHostname+'.'+$cbJson.dnsSpec.subdomain
-    $vCenterAdminUser = "administrator@vsphere.local"
-    $vCenterAdminPassword = $cbJson.pscSpecs.adminUserSsoPassword
-    $vmName = $cbJson.vcenterSpec.vcenterHostname
-    $portgroup1 = $cbJson.networkSpecs.portGroupKey[0]
-    $portgroup2 = "VM Network"
+    $Global:vCenterFqdn = $cbJson.vcenterSpec.vcenterHostname+'.'+$cbJson.dnsSpec.subdomain
+    $Global:vCenterAdminUser = "administrator@vsphere.local"
+    $Global:vCenterAdminPassword = $cbJson.pscSpecs.adminUserSsoPassword
+    $Global:vmName = $cbJson.vcenterSpec.vcenterHostname
+    $Global:portgroup1 = $cbJson.networkSpecs.portGroupKey[0]
+    $Global:portgroup2 = "VM Network"
 
     connectVsphere -hostname $esxiHost0 -user $esxiHostUser -password $esxiHostPassword # Connect to First ESXi Host
     if ($DefaultVIServer.Name -eq $esxiHost0) {
@@ -312,7 +311,7 @@ Try {
     connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
     if ($DefaultVIServer.Name -eq $vCenterFqdn) {
         $firstHost = "true"
-        Start-Job -ScriptBlock {migrateNetworking -updateHost $esxiHost0 -nic0 "vmnic0" -portKey0 "16"} # Update First Host Network Configuration
+        migrateNetworking -updateHost $esxiHost0 -nic0 "vmnic0" -portKey0 "16" # Update First Host Network Configuration
         disconnectVsphere -hostname $vCenterFqdn # Disconnect from First ESXi Host
     }
     else {
@@ -320,6 +319,7 @@ Try {
         Exit
     }
 
+    Start-Sleep 10
     connectVsphere -hostname $esxiHost0 -user $esxiHostUser -password $esxiHostPassword # Connect to First ESXi Host
     if ($DefaultVIServer.Name -eq $esxiHost0) {
         updatePortgroup -vmName $vmName -oldPortgroup $portgroup2 -newPortgroup $portgroup1 # Migrate vCenter Server from vSS to vDS
@@ -330,9 +330,10 @@ Try {
         Exit
     }
 
+    Start-Sleep 10
     connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
     if ($DefaultVIServer.Name -eq $vCenterFqdn) {
-        $firstHost = "false"
+        $Global:firstHost = "false"
         migrateNetworking -updateHost $esxiHost1 -nic0 "vmnic2" -portKey0 "19" -nic1 "vmnic0" -portKey1 "18" # Update Second Host Network Configuration
         migrateNetworking -updateHost $esxiHost2 -nic0 "vmnic2" -portKey0 "21" -nic1 "vmnic0" -portKey1 "20" # Update Third Host Network Configuration
         migrateNetworking -updateHost $esxiHost3 -nic0 "vmnic2" -portKey0 "23" -nic1 "vmnic0" -portKey1 "22" # Update Fourth Host Network Configuration
