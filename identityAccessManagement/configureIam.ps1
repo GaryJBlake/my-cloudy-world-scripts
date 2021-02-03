@@ -345,7 +345,7 @@ Try {
                 Write-LogMessage -Message "Identity Source $domain already added to vCenter Server $vCenterFqdn" -Colour Magenta
             }
             else {
-                Write-LogMessage -Message "Adding $domain as an Identity Source on vCenter Server $vCenterFqdn with user $domainUserBind"
+                Write-LogMessage -Message "Adding $domain as an Identity Source on vCenter Server $vCenterFqdn with user $vcenterDomainBindUser"
                 $scriptCommand = '/opt/vmware/bin/sso-config.sh -add_identity_source -type adldap -baseUserDN '+$baseUserDn+' -baseGroupDN '+$baseGroupDn+' -domain '+$domain+' -alias '+$domainAlias+' -username '+$vcenterDomainBindUser+' -password '+$vcenterDomainBindPassword+' -primaryURL '+$primaryUrl+''
                 $output = Invoke-VMScript -VM $vCenterVmName -ScriptText $scriptCommand -GuestUser $vCenterRootUser -GuestPassword $vCenterRootPassword; $output | Out-File $logFile -Encoding ASCII -Append
                 Write-LogMessage -Message "Checking if Identity Source $domain was added correctly"

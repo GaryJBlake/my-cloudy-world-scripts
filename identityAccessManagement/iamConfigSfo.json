@@ -1,4 +1,17 @@
 {
+	"activeDirectory": {
+		"dcMachineName": "dc-sfo01",
+		"domain": "sfo.rainpole.io",
+		"baseUserDn": "OU=VVD,dc=sfo,dc=rainpole,dc=io",
+		"baseGroupDn": "OU=VVD,dc=sfo,dc=rainpole,dc=io"
+    },
+    "adGroupSpec": {
+        "vcAdmin": "gg-vc-admins",
+        "vcfAdmin": "gg-vcf-admins",
+        "vcfOperator": "gg-vcf-operators",
+        "vcfViewer": "gg-vcf-viewers",
+        "esxiAdmin": "gg-esxi-admins"
+    },
     "sddcManagerSpec": {
         "sddcMgrFqdn": "sfo-vcf01.sfo.rainpole.io",
         "sddcMgrUser": "administrator@vsphere.local",
@@ -10,24 +23,19 @@
 		"vCenterAdminPassword": "VMw@re1!",
 		"vCenterVmName": "sfo-m01-vc01",
 		"vCenterRootUser": "root",
-		"vCenterRootPassword": "VMw@re1!"
+        "vCenterRootPassword": "VMw@re1!",
+        "domainBindUser": "svc-vsphere-ad",
+		"domainBindPassword": "VMw@re1!"
 	},
     "esxiSpec": {
         "esxiRootUser": "root",
-        "esxiRootPassword": "VMw@re1!"
+        "esxiRootPassword": "VMw@re1!",
+        "domainJoinUser": "svc-domain-join",
+		"domainJoinPassword": "VMw@re1!"
     },
-	"activeDirectory": {
-		"dcMachineName": "dc-sfo01",
-		"domain": "sfo.rainpole.io",
-		"baseUserDn": "OU=VVD,dc=sfo,dc=rainpole,dc=io",
-		"baseGroupDn": "OU=VVD,dc=sfo,dc=rainpole,dc=io",
-		"domainUser": "svc-domain-join",
-		"domainPassword": "VMw@re1!"
-    },
-    "adGroupSpec": {
-        "vcAdmin": "gg-vc-admins",
-        "vcfAdmin": "gg-vcf-admins",
-        "vcfOperator": "gg-vcf-operators",
-        "vcfViewer": "gg-vcf-viewers"
+    "wsaSpec": {
+        "folderName": "sfo-m01-fd-wsa",
+        "domainBindUser": "svc-wsa-ad",
+		"domainBindPassword": "VMw@re1!"
     }
 }
