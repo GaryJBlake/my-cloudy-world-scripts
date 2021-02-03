@@ -1,0 +1,40 @@
+{
+    "activeDirectory": {
+		"dcMachineName": "dc-lax01",
+		"domain": "lax.rainpole.io",
+		"baseUserDn": "OU=VVD,dc=lax,dc=rainpole,dc=io",
+		"baseGroupDn": "OU=VVD,dc=lax,dc=rainpole,dc=io"
+    },
+    "adGroupSpec": {
+        "vcAdmin": "gg-vc-admins",
+        "vcfAdmin": "gg-vcf-admins",
+        "vcfOperator": "gg-vcf-operators",
+        "vcfViewer": "gg-vcf-viewers"
+    },
+    "sddcManagerSpec": {
+        "sddcMgrFqdn": "lax-vcf01.lax.rainpole.io",
+        "sddcMgrUser": "administrator@vsphere.local",
+        "sddcMgrPassword": "VMw@re1!"
+    },
+	"vcenterSpec": {
+		"vCenterFqdn": "lax-m01-vc01.lax.rainpole.io",
+		"vCenterAdminUser": "administrator@vsphere.local",
+		"vCenterAdminPassword": "VMw@re1!",
+		"vCenterVmName": "lax-m01-vc01",
+		"vCenterRootUser": "root",
+        "vCenterRootPassword": "VMw@re1!",
+        "domainBindUser": "svc-vsphere-ad",
+		"domainBindPassword": "VMw@re1!"
+	},
+    "esxiSpec": {
+        "esxiRootUser": "root",
+        "esxiRootPassword": "VMw@re1!",
+        "domainJoinUser": "svc-domain-join",
+        "domainJoinPassword": "VMw@re1!"
+    },
+    "wsaSpec": {
+        "folderName": "lax-m01-fd-wsa",
+        "domainBindUser": "svc-wsa-ad",
+		"domainBindPassword": "VMw@re1!"
+    }
+}

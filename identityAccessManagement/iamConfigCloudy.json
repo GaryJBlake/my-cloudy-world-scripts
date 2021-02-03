@@ -1,0 +1,33 @@
+{
+    "sddcManagerSpec": {
+        "sddcMgrFqdn": "ldn-vcf01.ldn.cloudy.io",
+        "sddcMgrUser": "administrator@vsphere.local",
+        "sddcMgrPassword": "VMw@re1!"
+    },
+	"vcenterSpec": {
+		"vCenterFqdn": "ldn-m01-vc01.ldn.cloudy.io",
+		"vCenterAdminUser": "administrator@vsphere.local",
+		"vCenterAdminPassword": "VMw@re1!",
+		"vCenterVmName": "ldn-m01-vc01",
+		"vCenterRootUser": "root",
+		"vCenterRootPassword": "VMw@re1!"
+    },
+    "esxiSpec": {
+        "esxiRootUser": "root",
+        "esxiRootPassword": "VMw@re1!"
+    },
+	"activeDirectory": {
+		"dcMachineName": "ldn-dc01",
+		"domain": "ldn.cloudy.io",
+		"baseUserDn": "OU=VVD,dc=ldn,dc=cloudy,dc=io",
+		"baseGroupDn": "OU=VVD,dc=ldn,dc=cloudy,dc=io",
+		"domainUser": "svc-domain-join",
+		"domainPassword": "VMw@re1!"
+	},
+    "adGroupSpec": {
+        "vcAdmin": "gg-vc-admins",
+        "vcfAdmin": "gg-vcf-admins",
+        "vcfOperator": "gg-vcf-operators",
+        "vcfViewer": "gg-vcf-viewers"
+    }
+}
