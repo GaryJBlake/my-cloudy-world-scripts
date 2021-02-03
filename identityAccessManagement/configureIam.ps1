@@ -327,6 +327,7 @@ Try {
         $vcfAdmin = $domain.ToUpper() + "\" + $configJson.adGroupSpec.vcfAdmin
         $vcfOperator = $domain.ToUpper() + "\" + $configJson.adGroupSpec.vcfOperator
         $vcfViewer = $domain.ToUpper() + "\" + $configJson.adGroupSpec.vcfViewer
+        $esxiAdmin = $domainAlias.ToUpper() + "\" + $configJson.adGroupSpec.esxiAdmin
     }
     else {
         Write-LogMessage  -Message "JSON File Not Found" -Colour Red; Exit
@@ -376,7 +377,7 @@ Try {
                 Write-LogMessage -Message "Getting Role ID for 'Administrator' from vCenter Server $vCenterFqdn"
                 $roleId = (Get-VIRole -Name "Admin" | Select-Object -ExpandProperty Id)
                 Write-LogMessage -Message "Assigning Global Permission Role 'Administrator' to $vcAdmin in vCenter Server $vCenterFqdn"
-                New-GlobalPermission -vc_server $vCenterFqdn -vc_username $vCenterAdminUser -vc_password $vCenterAdminPassword -vc_role_id $roleID -vc_user $vcAdmin -propagate $true -type group | Out-File $logFile -Encoding ASCII -Append
+                New-GlobalPermission -vc_server $vCenterFqdn -vc_username $vCenterAdminUser -vc_password $vCenterAdminPassword -vc_role_id $roleId -vc_user $vcAdmin -propagate $true -type group
                 Write-LogMessage -Message "Assigned Global Permission Role 'Administrator' to $vcAdmin in vCenter Server $vCenterFqdn Successfully" -Colour Green
             }
             else {
@@ -402,6 +403,7 @@ Try {
                    Write-LogMessage -Message "Active Directory Group '$vcfAdmin' already assigned the ADMIN role in SDDC Manager" -Colour Magenta
                 }
                 else {
+                    Write-LogMessage -Message "Adding Active Directory Group '$vcfAdmin' the ADMIN role in SDDC Manager"
                     New-VCFGroup -group $vcfAdmin.Split("\")[1] -domain $domain -role ADMIN | Out-File $logFile -Encoding ASCII -Append
                     Write-LogMessage -Message "Checking if Active Directory Group '$vcfAdmin' was added correctly"
                     $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $vcfAdmin}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
@@ -427,7 +429,9 @@ Try {
                     Write-LogMessage -Message "Active Directory Group '$vcfOperator' already assigned the OPERATOR role in SDDC Manager" -Colour Magenta
                 }
                 else {
+                    Write-LogMessage -Message "Adding Active Directory Group '$vcfOperator' the OPERATOR role in SDDC Manager"
                     New-VCFGroup -group $vcfOperator.Split("\")[1] -domain $domain -role OPERATOR | Out-File $logFile -Encoding ASCII -Append
+                    Write-LogMessage -Message "Checking if Active Directory Group '$vcfOperator' was added correctly"
                     $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $vcfOperator}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
                     if ($groupCheck.name -eq $vcfOperator) {
                         Write-LogMessage -Message "Active Directory Group '$vcfOperator' assigned the OPERATOR role in SDDC Manager Successfully" -Colour Green
@@ -453,7 +457,9 @@ Try {
                         Write-LogMessage -Message "Active Directory Group '$vcfViewer' already assigned the VIEWER role in SDDC Manager" -Colour Magenta
                     }
                     else {
+                        Write-LogMessage -Message "Adding Active Directory Group '$vcfViewer' the VIEWER role in SDDC Manager"
                         New-VCFGroup -group $vcfViewer.Split("\")[1] -domain $domain -role VIEWER | Out-File $logFile -Encoding ASCII -Append
+                        Write-LogMessage -Message "Checking if Active Directory Group '$vcfViewer' was added correctly"
                         $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $vcfViewer}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
                         if ($groupCheck.name -eq $vcfViewer) {
                             Write-LogMessage -Message "Active Directory Group '$vcfViewer' assigned the VIEWER role in SDDC Manager Successfully" -Colour Green
@@ -510,6 +516,47 @@ Try {
         }
 
         disconnectVsphere -hostname $vCenterFqdn # Disconnect from vCenter Server
+
+        # Assign Active Directory Group to each ESXi Host for Administration
+        Try {
+            Write-LogMessage -Message "Assign Active Directory Group to each ESXi Host for Administration" -Colour Yellow
+
+            $groupName = $esxiAdmin.Split("\")[1]
+            Write-LogMessage -Message "Checking if Active Directory Group '$groupName' is present in Active Directory Domain"
+            if (Get-ADGroup -Server $domain -Credential $creds -Filter {SamAccountName -eq $groupName}) {
+                $count=0
+                Foreach ($esxiHost in $esxiHosts) {
+                    connectVsphere -hostname $esxiHost -user $esxiRootUser -password $esxiRootPassword # Connect to vCenter Server
+                    Write-LogMessage -Message "Checking to see if Active Directory Group $esxiAdmin has already been assigned permissions to $esxiHost"
+                    $checkPermission = Get-VIPermission | Where-Object {$_.Principal -eq $esxiAdmin}
+                    if ($checkPermission.Principal -eq $esxiAdmin) {
+                        Write-LogMessage -Message "Active Directory Group '$esxiAdmin' already assigned permissions to $esxiHost" -Colour Magenta
+                    }
+                    else {
+                        Write-LogMessage -Message "Adding Active Directory Group '$esxiAdmin' the Administrator role to $esxiHost"
+                        New-VIPermission -Entity (Get-VMHost) -Principal $esxiAdmin -Propagate $true -Role Admin | Out-File $logFile -Encoding ASCII -Append
+                        Write-LogMessage -Message "Checking if Active Directory Group '$esxiAdmin' was added correctly"
+                        $checkPermission = Get-VIPermission | Where-Object {$_.Principal -eq $esxiAdmin}
+                        if ($checkPermission.Principal -eq $esxiAdmin) {
+                            Write-LogMessage -Message "Active Directory Group '$esxiAdmin' assigned the Administrator role to $esxiHost Successfully" -Colour Green
+                        }
+                        else {
+                            Write-LogMessage -Message "Assigning Active Directory Group '$esxiAdmin' the Administrator role to $esxiHost Failed" -Colour Red
+                        }
+                    }
+
+
+                    disconnectVsphere -hostname $esxiHost # Disconnect from vCenter Server
+                    $count=$count+1
+                }
+            }
+            else {
+                Write-LogMessage -Message "Active Directory Group '$groupName' not found in the Active Directory Domain, please create and retry" -Colour Red
+            }
+        }
+        Catch {
+            Debug-CatchWriter -object $_
+        }
     }
     else {
         Write-LogMessage  -Message "Connection Attempt to $vCenterFqdn Failed" -Colour Red

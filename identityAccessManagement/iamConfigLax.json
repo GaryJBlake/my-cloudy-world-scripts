@@ -9,7 +9,8 @@
         "vcAdmin": "gg-vc-admins",
         "vcfAdmin": "gg-vcf-admins",
         "vcfOperator": "gg-vcf-operators",
-        "vcfViewer": "gg-vcf-viewers"
+        "vcfViewer": "gg-vcf-viewers",
+        "esxiAdmin": "gg-esxi-admins"
     },
     "sddcManagerSpec": {
         "sddcMgrFqdn": "lax-vcf01.lax.rainpole.io",
