@@ -288,6 +288,33 @@ vmware-session-nonce=$sessionnonce&permissions=%3Cpermissions%3E%0D%0A+++%3Cprin
     $results = Invoke-WebRequest -Uri $mob_logout_url -WebSession $vmware -Method GET
 }
 
+Function createSddcManagerRole ($adGroup, $adDomain, $secureCreds, $vcfRole) {
+    $groupName = $adGroup.Split("\")[1]
+    Write-LogMessage -Message "Checking if Active Directory Group '$groupName' is present in Active Directory Domain"
+    if (Get-ADGroup -Server $adDomain -Credential $secureCreds -Filter {SamAccountName -eq $groupName}) {
+        Write-LogMessage -Message "Checking if Active Directory Group '$adGroup' has already been assigned the $vcfRole role in SDDC Manager"
+        $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $adGroup}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
+        if ($groupCheck.name -eq $adGroup) {
+           Write-LogMessage -Message "Active Directory Group '$adGroup' already assigned the $vcfRole role in SDDC Manager" -Colour Magenta
+        }
+        else {
+            Write-LogMessage -Message "Adding Active Directory Group '$adGroup' the $vcfRole role in SDDC Manager"
+            New-VCFGroup -group $adGroup.Split("\")[1] -domain $adDomain -role $vcfRole | Out-File $logFile -Encoding ASCII -Append
+            Write-LogMessage -Message "Checking if Active Directory Group '$adGroup' was added correctly"
+            $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $adGroup}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
+            if ($groupCheck.name -eq $adGroup) {
+                Write-LogMessage -Message "Active Directory Group '$adGroup' assigned the $vcfRole role in SDDC Manager Successfully" -Colour Green
+            }
+            else {
+                Write-LogMessage -Message "Assigning Active Directory Group '$adGroup' $vcfRole role in SDDC Manager Failed" -Colour Red
+            }
+        }
+    }
+    else {
+        Write-LogMessage -Message "Active Directory Group '$groupName' not found in the Active Directory Domain, please create and retry" -Colour Red
+    }
+}
+
 # EXECUTION SECTION
 
 Try {
@@ -297,20 +324,28 @@ Try {
     if (Test-Path -Path $json) {
         $Global:configJson = (Get-Content -Raw $json) | ConvertFrom-Json
 
+        $sddcMgrFqdn = $configJson.sddcManagerSpec.sddcMgrFqdn
+        $sddcMgrUser = $configJson.sddcManagerSpec.sddcMgrUser
+        $sddcMgrPassword = $configJson.sddcManagerSpec.sddcMgrPassword
+
+        $timeZone = $configJson.infraSpec.timezone
+
         $domain = $configJson.activeDirectory.domain
         $domainAlias = ($domain.Split("."))[0].ToUpper()
         $baseUserDn = $configJson.activeDirectory.baseUserDn
         $baseGroupDn = $configJson.activeDirectory.baseGroupDn
         $primaryUrl = 'ldap://' + $configJson.activeDirectory.dcMachineName + '.' + $domain + ':389'
 
-        $sddcMgrFqdn = $configJson.sddcManagerSpec.sddcMgrFqdn
-        $sddcMgrUser = $configJson.sddcManagerSpec.sddcMgrUser
-        $sddcMgrPassword = $configJson.sddcManagerSpec.sddcMgrPassword
+        $vcAdmin = $configJson.adGroupSpec.vcAdmin
+        $vcfAdmin = $domain.ToUpper() + "\" + $configJson.adGroupSpec.vcfAdmin
+        $vcfOperator = $domain.ToUpper() + "\" + $configJson.adGroupSpec.vcfOperator
+        $vcfViewer = $domain.ToUpper() + "\" + $configJson.adGroupSpec.vcfViewer
+        $esxiAdmin = $domainAlias.ToUpper() + "\" + $configJson.adGroupSpec.esxiAdmin
 
-        $vCenterFqdn = $configJson.vcenterSpec.vCenterFqdn
+        #$vCenterFqdn = $configJson.vcenterSpec.vCenterFqdn
         $vCenterAdminUser = $configJson.vcenterSpec.vCenterAdminUser
         $vCenterAdminPassword = $configJson.vcenterSpec.vCenterAdminPassword
-        $vCenterVmName = $configJson.vcenterSpec.vCenterVmName
+        #$vCenterVmName = $configJson.vcenterSpec.vCenterVmName
         $vCenterRootUser = $configJson.vcenterSpec.vCenterRootUser
         $vCenterRootPassword = $configJson.vcenterSpec.vCenterRootPassword
         $vcenterDomainBindUser = $configJson.vcenterSpec.domainBindUser + '@' + ($domain.Split("."))[0].ToLower()
@@ -323,17 +358,33 @@ Try {
         $esxiDomainJoinUser = $configJson.esxiSpec.domainJoinUser
         $esxiDomainJoinPassword = $configJson.esxiSpec.domainJoinPassword
         
-        $vcAdmin = $configJson.adGroupSpec.vcAdmin
-        $vcfAdmin = $domain.ToUpper() + "\" + $configJson.adGroupSpec.vcfAdmin
-        $vcfOperator = $domain.ToUpper() + "\" + $configJson.adGroupSpec.vcfOperator
-        $vcfViewer = $domain.ToUpper() + "\" + $configJson.adGroupSpec.vcfViewer
-        $esxiAdmin = $domainAlias.ToUpper() + "\" + $configJson.adGroupSpec.esxiAdmin
+        $wsaFqdn = $configJson.wsaSpec.wsaFqdn
+        $wsaOva = $configJson.wsaSpec.wsaOva
+        $wsaFolderName = $configJson.wsaSpec.wsaFolderName
+        $wsaDomainBindUser = $configJson.wsaSpec.domainBindUser
+        $wsaDomainBindPassword = $configJson.wsaSpec.domainBindPassword
+
+        connectVcf -fqdn $sddcMgrFqdn -username $sddcMgrUser -password $sddcMgrPassword
+
+        $vCenterFqdn = (Get-VCFWorkloadDomain | Where-Object {$_.type -eq "MANAGEMENT"}).vcenters.fqdn
+        $vCenterVmName = $vCenterFqdn.Split(".")[0]
+
+        connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
+
+        $ntpServer = (Get-VCFConfigurationNTP).ipAddress
+        $dnsServer1 = (Get-VCFConfigurationDNS | Where-Object {$_.isPrimary -Match "True"}).ipAddress
+        $dnsServer2 = (Get-VCFConfigurationDNS | Where-Object {$_.isPrimary -Match "False"}).ipAddress
+
+        $cluster = (Get-VCFCluster | Where-Object {$_.id -eq ((Get-VCFWorkloadDomain | Where-Object {$_.type -eq "MANAGEMENT"}).clusters.id)}).Name
+        $datastore = (Get-VCFCluster | Where-Object {$_.id -eq ((Get-VCFWorkloadDomain | Where-Object {$_.type -eq "MANAGEMENT"}).clusters.id)}).primaryDatastoreName
+        $datacenter = (Get-Datacenter -Cluster $cluster).Name
+        $regionaPortgroup = (Get-VCFApplicationVirtualNetwork | Where-Object {$_.regionType -eq "REGION_A"}).name
+
     }
     else {
         Write-LogMessage  -Message "JSON File Not Found" -Colour Red; Exit
     }
 
-    connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
     if ($DefaultVIServer.Name -eq $vCenterFqdn) {
         # Add Active Directory over LDAP as Identity Provider to vCenter Server and Set as Default
         Try {
@@ -391,91 +442,9 @@ Try {
         # Assign Active Directory Groups to Roles in SDDC Manager
         Try {
             Write-LogMessage -Message "Assign Active Directory Groups to Roles in SDDC Manager" -Colour Yellow
-            connectVcf -fqdn $sddcMgrFqdn -username $sddcMgrUser -password $sddcMgrPassword
-
-            # Add ADMIN Role in SDDC Manager
-            $groupName = $vcfAdmin.Split("\")[1]
-            Write-LogMessage -Message "Checking if Active Directory Group '$groupName' is present in Active Directory Domain"
-            if (Get-ADGroup -Server $domain -Credential $creds -Filter {SamAccountName -eq $groupName}) {
-                Write-LogMessage -Message "Checking if Active Directory Group '$vcfAdmin' has already been assigned the ADMIN role in SDDC Manager"
-                $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $vcfAdmin}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
-                if ($groupCheck.name -eq $vcfAdmin) {
-                   Write-LogMessage -Message "Active Directory Group '$vcfAdmin' already assigned the ADMIN role in SDDC Manager" -Colour Magenta
-                }
-                else {
-                    Write-LogMessage -Message "Adding Active Directory Group '$vcfAdmin' the ADMIN role in SDDC Manager"
-                    New-VCFGroup -group $vcfAdmin.Split("\")[1] -domain $domain -role ADMIN | Out-File $logFile -Encoding ASCII -Append
-                    Write-LogMessage -Message "Checking if Active Directory Group '$vcfAdmin' was added correctly"
-                    $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $vcfAdmin}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
-                    if ($groupCheck.name -eq $vcfAdmin) {
-                        Write-LogMessage -Message "Active Directory Group '$vcfAdmin' assigned the ADMIN role in SDDC Manager Successfully" -Colour Green
-                    }
-                    else {
-                        Write-LogMessage -Message "Assigning Active Directory Group '$vcfAdmin' ADMIN role in SDDC Manager Failed" -Colour Red
-                    }
-                }
-            }
-            else {
-                Write-LogMessage -Message "Active Directory Group '$groupName' not found in the Active Directory Domain, please create and retry" -Colour Red
-            }
-
-            # Add OPERATOR Role in SDDC Manager
-            $groupName = $vcfOperator.Split("\")[1]
-            Write-LogMessage -Message "Checking if Active Directory Group '$groupName' is present in Active Directory Domain"
-            if (Get-ADGroup -Server $domain -Credential $creds -Filter {SamAccountName -eq $groupName}) {
-                Write-LogMessage -Message "Checking if Active Directory Group '$vcfOperator' has already been assigned the OPERATOR role in SDDC Manager"
-                $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $vcfOperator}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
-                if ($groupCheck.name -eq $vcfOperator) {
-                    Write-LogMessage -Message "Active Directory Group '$vcfOperator' already assigned the OPERATOR role in SDDC Manager" -Colour Magenta
-                }
-                else {
-                    Write-LogMessage -Message "Adding Active Directory Group '$vcfOperator' the OPERATOR role in SDDC Manager"
-                    New-VCFGroup -group $vcfOperator.Split("\")[1] -domain $domain -role OPERATOR | Out-File $logFile -Encoding ASCII -Append
-                    Write-LogMessage -Message "Checking if Active Directory Group '$vcfOperator' was added correctly"
-                    $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $vcfOperator}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
-                    if ($groupCheck.name -eq $vcfOperator) {
-                        Write-LogMessage -Message "Active Directory Group '$vcfOperator' assigned the OPERATOR role in SDDC Manager Successfully" -Colour Green
-                    }
-                    else {
-                        Write-LogMessage -Message "Assigning Active Directory Group '$vcfOperator' OPERATOR role in SDDC Manager Failed" -Colour Red
-                    }
-                }
-            }
-            else {
-                Write-LogMessage -Message "Active Directory Group '$groupName' not found in the Active Directory Domain, please create and retry" -Colour Red
-            }
-            
-            # Add VIEWER Role in SDDC Manager
-            $checkVersion = ($getVersion = Get-VCFManager).version.Split('-')[0]
-            if ($checkVersion -ge "4.2.0.0") {
-                $groupName = $vcfViewer.Split("\")[1]
-                Write-LogMessage -Message "Checking if Active Directory Group '$groupName' is present in Active Directory Domain"
-                if (Get-ADGroup -Server $domain -Credential $creds -Filter {SamAccountName -eq $groupName}) {
-                    Write-LogMessage -Message "Checking if Active Directory Group '$vcfViewer' has already been assigned the VIEWER role in SDDC Manager"
-                    $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $vcfViewer}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
-                    if ($groupCheck.name -eq $vcfViewer) {
-                        Write-LogMessage -Message "Active Directory Group '$vcfViewer' already assigned the VIEWER role in SDDC Manager" -Colour Magenta
-                    }
-                    else {
-                        Write-LogMessage -Message "Adding Active Directory Group '$vcfViewer' the VIEWER role in SDDC Manager"
-                        New-VCFGroup -group $vcfViewer.Split("\")[1] -domain $domain -role VIEWER | Out-File $logFile -Encoding ASCII -Append
-                        Write-LogMessage -Message "Checking if Active Directory Group '$vcfViewer' was added correctly"
-                        $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $vcfViewer}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
-                        if ($groupCheck.name -eq $vcfViewer) {
-                            Write-LogMessage -Message "Active Directory Group '$vcfViewer' assigned the VIEWER role in SDDC Manager Successfully" -Colour Green
-                        }
-                        else {
-                            Write-LogMessage -Message "Assigning Active Directory Group '$vcfViewer' VIEWER role in SDDC Manager Failed" -Colour Red
-                        }
-                    }
-                }
-                else {
-                    Write-LogMessage -Message "Active Directory Group '$groupName' not found in the Active Directory Domain, please create and retry" -Colour Red
-                }
-            }
-            else {
-                Write-LogMessage -Message "Assigning VIEWER role in SDDC Manager Failed, Role not supported in the version deployed" -Colour Red 
-            }
+            createSddcManagerRole -adGroup $vcfAdmin -adDomain $domain -secureCreds $creds -vcfRole ADMIN
+            createSddcManagerRole -adGroup $vcfOperator -adDomain $domain -secureCreds $creds -vcfRole OPERATOR
+            createSddcManagerRole -adGroup $vcfViewer -adDomain $domain -secureCreds $creds -vcfRole VIEWER
         }
         Catch {
             Debug-CatchWriter -object $_
@@ -553,6 +522,35 @@ Try {
             else {
                 Write-LogMessage -Message "Active Directory Group '$groupName' not found in the Active Directory Domain, please create and retry" -Colour Red
             }
+        }
+        Catch {
+            Debug-CatchWriter -object $_
+        }
+
+        Try {
+            # Create VM and Template Folder and Deploy the Workspace One Access Virtual Appliance
+            Write-LogMessage -Message "Create VM and Template Folder and Deploy the Workspace One Access Virtual Appliance" -Colour Yellow
+            connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
+            
+            Write-LogMessage -Message "Checking if VM and Template Folder '$wsaFolderName' already exists in vCenter Server $vCenterFqdn"
+            $folderExists = (Get-Folder -Name $wsaFolderName -ErrorAction SilentlyContinue)
+            if ($folderExists) {
+                Write-LogMessage -Message "The VM and Template Folder '$wsaFolderName' already exists in $vCenterFqdn" -colour Magenta
+            }
+            else {
+                Write-LogMessage -Message "Creating VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn"
+                $folder = (Get-View (Get-View -viewtype datacenter -filter @{"name"=[string]$datacenter}).vmfolder).CreateFolder($wsaFolderName)
+                Write-LogMessage -Message "Checking if VM and Template Folder '$wsaFolderName' was created correctly"
+                $folderExists = (Get-Folder -Name $wsaFolderName -ErrorAction SilentlyContinue)
+                if ($folderExists) {
+                    Write-LogMessage -Message  "Created VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn Successfully"
+                }
+                else {
+                    Write-LogMessage -Message "reating VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn Failed" -Colour Red
+                }
+            }
+
+            disconnectVsphere -hostname $vCenterFqdn # Disconnect from vCenter Server
         }
         Catch {
             Debug-CatchWriter -object $_

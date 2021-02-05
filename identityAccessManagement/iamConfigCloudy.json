@@ -34,7 +34,9 @@
 		"domainJoinPassword": "VMw@re1!"
     },
     "wsaSpec": {
-        "folderName": "ldn-m01-fd-wsa",
+        "wsaOva": "identity-manager-3.3.4.0-17451211_OVF10.ova",
+        "wsaFqdn": "ldn-wsa01.ldn.cloudy.io",
+        "wsaFolderName": "ldn-m01-fd-wsa",
         "domainBindUser": "svc-wsa-ad",
 		"domainBindPassword": "VMw@re1!"
     }
