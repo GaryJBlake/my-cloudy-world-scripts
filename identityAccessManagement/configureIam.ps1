@@ -342,10 +342,8 @@ Try {
         $vcfViewer = $domain.ToUpper() + "\" + $configJson.adGroupSpec.vcfViewer
         $esxiAdmin = $domainAlias.ToUpper() + "\" + $configJson.adGroupSpec.esxiAdmin
 
-        #$vCenterFqdn = $configJson.vcenterSpec.vCenterFqdn
         $vCenterAdminUser = $configJson.vcenterSpec.vCenterAdminUser
         $vCenterAdminPassword = $configJson.vcenterSpec.vCenterAdminPassword
-        #$vCenterVmName = $configJson.vcenterSpec.vCenterVmName
         $vCenterRootUser = $configJson.vcenterSpec.vCenterRootUser
         $vCenterRootPassword = $configJson.vcenterSpec.vCenterRootPassword
         $vcenterDomainBindUser = $configJson.vcenterSpec.domainBindUser + '@' + ($domain.Split("."))[0].ToLower()
@@ -359,16 +357,27 @@ Try {
         $esxiDomainJoinPassword = $configJson.esxiSpec.domainJoinPassword
         
         $wsaFqdn = $configJson.wsaSpec.wsaFqdn
+        $wsaHostname = $wsaFqdn.Split(".")[0]
+        $wsaIpAddress = $configJson.wsaSpec.wsaIpAddress
+        $wsaGateway = $configJson.wsaSpec.wsaGateway
+        $wsaSubnetMask = $configJson.wsaSpec.wsaSubnetMask
         $wsaOva = $configJson.wsaSpec.wsaOva
+        $wsaOvaPath = $PSScriptRoot + "\" + $wsaOva
         $wsaFolderName = $configJson.wsaSpec.wsaFolderName
         $wsaDomainBindUser = $configJson.wsaSpec.domainBindUser
         $wsaDomainBindPassword = $configJson.wsaSpec.domainBindPassword
 
+        Write-LogMessage  -Message "Checking for Workspace ONE Access OVA File" -Colour Yellow
+        if (!(Test-Path -Path $wsaOvaPath)) {
+            Write-LogMessage  -Message "Workspace ONE Access OVA File Not Found" -Colour Red; Exit
+        }
+
+        # Dynamically obtain details from SDDC Manager and vCenter Server
         connectVcf -fqdn $sddcMgrFqdn -username $sddcMgrUser -password $sddcMgrPassword
 
         $vCenterFqdn = (Get-VCFWorkloadDomain | Where-Object {$_.type -eq "MANAGEMENT"}).vcenters.fqdn
         $vCenterVmName = $vCenterFqdn.Split(".")[0]
-
+         
         connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
 
         $ntpServer = (Get-VCFConfigurationNTP).ipAddress
@@ -379,11 +388,12 @@ Try {
         $datastore = (Get-VCFCluster | Where-Object {$_.id -eq ((Get-VCFWorkloadDomain | Where-Object {$_.type -eq "MANAGEMENT"}).clusters.id)}).primaryDatastoreName
         $datacenter = (Get-Datacenter -Cluster $cluster).Name
         $regionaPortgroup = (Get-VCFApplicationVirtualNetwork | Where-Object {$_.regionType -eq "REGION_A"}).name
-
     }
     else {
         Write-LogMessage  -Message "JSON File Not Found" -Colour Red; Exit
     }
+
+    
 
     if ($DefaultVIServer.Name -eq $vCenterFqdn) {
         # Add Active Directory over LDAP as Identity Provider to vCenter Server and Set as Default
@@ -495,7 +505,7 @@ Try {
             if (Get-ADGroup -Server $domain -Credential $creds -Filter {SamAccountName -eq $groupName}) {
                 $count=0
                 Foreach ($esxiHost in $esxiHosts) {
-                    connectVsphere -hostname $esxiHost -user $esxiRootUser -password $esxiRootPassword # Connect to vCenter Server
+                    connectVsphere -hostname $esxiHost -user $esxiRootUser -password $esxiRootPassword # Connect to ESXi Server
                     Write-LogMessage -Message "Checking to see if Active Directory Group $esxiAdmin has already been assigned permissions to $esxiHost"
                     $checkPermission = Get-VIPermission | Where-Object {$_.Principal -eq $esxiAdmin}
                     if ($checkPermission.Principal -eq $esxiAdmin) {
@@ -513,9 +523,7 @@ Try {
                             Write-LogMessage -Message "Assigning Active Directory Group '$esxiAdmin' the Administrator role to $esxiHost Failed" -Colour Red
                         }
                     }
-
-
-                    disconnectVsphere -hostname $esxiHost # Disconnect from vCenter Server
+                    disconnectVsphere -hostname $esxiHost # Disconnect from ESXi Server
                     $count=$count+1
                 }
             }
@@ -527,8 +535,9 @@ Try {
             Debug-CatchWriter -object $_
         }
 
+        # Deploy and Configure Workspace ONE Access Virtual Appliance
         Try {
-            # Create VM and Template Folder and Deploy the Workspace One Access Virtual Appliance
+            # Create VM and Template Folder
             Write-LogMessage -Message "Create VM and Template Folder and Deploy the Workspace One Access Virtual Appliance" -Colour Yellow
             connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
             
@@ -543,13 +552,85 @@ Try {
                 Write-LogMessage -Message "Checking if VM and Template Folder '$wsaFolderName' was created correctly"
                 $folderExists = (Get-Folder -Name $wsaFolderName -ErrorAction SilentlyContinue)
                 if ($folderExists) {
-                    Write-LogMessage -Message  "Created VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn Successfully"
+                    Write-LogMessage -Message  "Created VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn Successfully" -Colour Green
                 }
                 else {
                     Write-LogMessage -Message "reating VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn Failed" -Colour Red
                 }
             }
 
+            # Deploy Workspace ONE Access Virtual Appliance
+            Write-LogMessage -Message "Checking for pre-existing Workspace ONE Access virtual machine called $wsaHostname in vCenter Server $vCenterFqdn"
+            $wsaExists = Get-VM -Name $wsaHostname -ErrorAction SilentlyContinue
+            if ($wsaExists) {
+                Write-LogMessage -Message "A virtual machine called $wsaHostname already exists in vCenter Server $vCenterFqdn" -Colour Magenta
+            }
+            else {
+                Write-LogMessage -Message "No virtual machine called $wsaHostname found in vCenter Server $vCenterFqdn. Proceeding with Deployment"  					
+                $command = '"C:\Program Files\VMware\VMware OVF Tool\ovftool.exe" --noSSLVerify --acceptAllEulas  --allowAllExtraConfig --diskMode=thin --powerOn --name='+$wsaHostname+' --ipProtocol="IPv4" --ipAllocationPolicy="fixedAllocatedPolicy" --vmFolder='+$wsaFolderName+' --net:"Network 1"='+$regionaPortgroup+'  --datastore='+$datastore+' --X:injectOvfEnv --prop:vamitimezone='+$timezone+'  --prop:vami.ip0.IdentityManager='+$wsaIpAddress+' --prop:vami.netmask0.IdentityManager='+$wsaSubnetMask+' --prop:vami.hostname='+$wsaFqdn+' --prop:vami.gateway.IdentityManager='+$wsaGateway+' --prop:vami.domain.IdentityManager='+$domain+' --prop:vami.searchpath.IdentityManager='+$domain+' --prop:vami.DNS.IdentityManager='+$dnsServer1+','+$dnsServer2+' '+$wsaOvaPath+'  "vi://'+$vCenterAdminUser+':'+$vCenterAdminPassword+'@'+$vcenterFqdn+'/'+$datacenter+'/host/'+$cluster+'/"'
+                $command | Out-File $logFile -Encoding ASCII -Append
+                Write-LogMessage -Message "This will take at least 10-15 minutes and maybe significantly longer depending on the environment. Please be patient" 
+                Invoke-Expression "& $command" | Out-File $logFile -Encoding ASCII -Append
+                $wsaExists = Get-VM -Name $wsaHostname -ErrorAction SilentlyContinue
+                if ($wsaExists) {
+                    $Timeout = 900  ## seconds
+                    $CheckEvery = 15  ## seconds
+                    Try {
+                        $timer = [Diagnostics.Stopwatch]::StartNew()  ## Start the timer
+                        Write-LogMessage -Message "Checking the deployment status of Workspace ONE Access Virtual Machine $wsaHostname in vCenter Server $vCenterFqdn"
+                        Write-LogMessage -Message "Waiting for $wsaIpAddress to become pingable." -Colour Yellow
+                        While (-not (Test-Connection -ComputerName $wsaIpAddress -Quiet -Count 1)) {
+                            ## If the timer has waited greater than or equal to the timeout, throw an exception exiting the loop
+                            if ($timer.Elapsed.TotalSeconds -ge $Timeout) {
+                                Throw "Timeout Exceeded. Giving up on ping availability to $wsaIpAddress"
+                            }
+                            Start-Sleep -Seconds $CheckEvery  ## Stop the loop every $CheckEvery seconds
+                        }
+                    }
+                    Catch {
+                        Write-LogMessage -Message "ERROR: Failed to get a Response from $wsaHostname" -Colour Red
+                    }
+                    Finally {
+                        $timer.Stop()  ## Stop the timer
+                    }
+                    Try {
+                        #Polling for Completed Deployment
+                        $scriptSuccess = 'more /var/log/boot.msg | grep "' + "'hzn-dots start'" + ' exits with status 0"'
+                        $scriptError = 'more /var/log/boot.msg | grep "' + "'hzn-dots start'" + ' exits with status 1"'
+                        Write-LogMessage -Message "Initial connection made, waiting for $wsaHostname to fully boot and services to start. Be warned, this takes a long time." -Colour Yellow
+                        Do {
+                            Start-Sleep 30
+                            $ScriptSuccessOutput = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptSuccess -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue
+                            $ScriptErrorOutput = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptError -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue
+                            If (($ScriptSuccessOutput.ScriptOutput) -OR ($scriptError.ScriptOutput)) {
+                                $finished=$true
+                            }
+                        } Until($finished)
+                        if ($ScriptSuccessOutput) {
+                            Write-LogMessage -Message "Deployment of $wsaHostname using $wsaOvaPath completed Successfully" -Colour Green
+                            #Setting NTP
+                            #LogMessage -message "Setting NTP Configuration on $wsaHostname"
+                            #$scriptCommand = 'sed /^server/d /etc/ntp.conf > MNtp_Config.txt'
+                            #Invoke-VMScript -VM $wsaHost.hostname -ScriptText $scriptCommand -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append 
+                            #$scriptCommand = "sed -i '93iserver $($sharedDetails.ntpserver1)' MNtp_Config.txt"
+                            #Invoke-VMScript -VM $wsaHost.hostname -ScriptText $scriptCommand -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append 
+                            #LogMessage -message "Configuring and Starting NTP Services"
+                            #$scriptCommand = 'mv /root/MNtp_Config.txt /etc/ntp.conf;vmware-toolbox-cmd timesync disable;chkconfig ntp on;service ntp start'
+                            #Invoke-VMScript -VM $wsaHost.hostname -ScriptText $scriptCommand -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append 
+                        }
+                        elseif ($ScriptErrorOutput) {
+                            Write-LogMessage -Message "$wsaHostname failed to initialize properly. Please delete the VM from $vcenterFqdn and retry."
+                            Exit
+                        }
+                    }
+                    Catch {
+                        Debug-CatchWriter -object $_
+                    }
+                }
+                else {
+                    Write-LogMessage -Message "Workspace ONE Access Failed to deploy. Please check for errors in $logFile" -Colour Red    
+                }
+            }
             disconnectVsphere -hostname $vCenterFqdn # Disconnect from vCenter Server
         }
         Catch {

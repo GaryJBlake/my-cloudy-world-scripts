@@ -1,4 +1,7 @@
 {
+    "infraSpec": {
+        "timezone": "US/Pacific"
+    },
 	"activeDirectory": {
 		"dcMachineName": "dc-sfo01",
 		"domain": "sfo.rainpole.io",
@@ -18,10 +21,8 @@
         "sddcMgrPassword": "VMw@re1!"
     },
 	"vcenterSpec": {
-		"vCenterFqdn": "sfo-m01-vc01.sfo.rainpole.io",
 		"vCenterAdminUser": "administrator@vsphere.local",
 		"vCenterAdminPassword": "VMw@re1!",
-		"vCenterVmName": "sfo-m01-vc01",
 		"vCenterRootUser": "root",
         "vCenterRootPassword": "VMw@re1!",
         "domainBindUser": "svc-vsphere-ad",
@@ -35,7 +36,11 @@
     },
     "wsaSpec": {
         "wsaOva": "identity-manager-3.3.4.0-17451211_OVF10.ova",
-        "wsaFqdn": "sfo-wsa01.lax.rainpole.io",
+        "wsaFqdn": "sfo-wsa01.sfo.rainpole.io",
+        "wsaIpAddress": "192.168.31.60",
+        "wsaGateway": "192.168.31.1",
+        "wsaSubnetMask": "255.255.255.0",
+        "wsaPasswors": "VMw@re1!",
         "wsaFolderName": "sfo-m01-fd-wsa",
         "domainBindUser": "svc-wsa-ad",
 		"domainBindPassword": "VMw@re1!"

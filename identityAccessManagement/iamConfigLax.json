@@ -37,6 +37,10 @@
     "wsaSpec": {
         "wsaOva": "identity-manager-3.3.4.0-17451211_OVF10.ova",
         "wsaFqdn": "lax-wsa01.lax.rainpole.io",
+        "wsaIpAddress": "192.168.32.60",
+        "wsaGateway": "192.168.32.1",
+        "wsaSubnetMask": "255.255.255.0",
+        "wsaPasswors": "VMw@re1!",
         "wsaFolderName": "lax-m01-fd-wsa",
         "domainBindUser": "svc-wsa-ad",
 		"domainBindPassword": "VMw@re1!"
