@@ -5,20 +5,26 @@
     .Blog:          http:/my-cloudy-world.com
     .Twitter:       @GaryJBlake
     .Version:       1.0 (Build 001)
-    .Date:          2021-02-03
+    .Date:          2021-02-12
     ===============================================================================================================
     .CHANGE_LOG
 
-    - 1.0.001 (Gary Blake / 2020-02-03) - Initial script creation
+    - 1.0.001 (Gary Blake / 2020-02-12) - Initial script creation
 
     ===============================================================================================================
     .DESCRIPTION
     This scripts performs the configuration of Identity and Access Management for VMware Cloud Foundation.
     It uses the the JSON as the input and then performs the following steps:
+    - Dynamically obtain details from SDDC Manager and vCenter Server
     - Add Active Directory over LDAP Identity Source to vCenter Server and Set as Default
     - Assign an Active Directory Group the Administrator Role as a Global Permission in vCenter Server
-    - Assign Active Directory Groups to Roles in SDDC Manager
+    - Assign Active Directory Groups to Admin, Operator and Viewer Roles in SDDC Manager
     - Join each ESXi Host to the Active Directory Domain
+    - Assign an Active Directory Group to each ESXi Host for Administration
+    - Create VM and Template Folder and Deploy the Workspace One Access Virtual Appliance
+    - Perform Initial Configuration of Workspace ONE Access Virtual Appliance
+    - Configure NTP Server on Workspace ONE Access Appliance
+    - Install a Signed Certificate on Workspace ONE Access Appliance
 
     .EXAMPLE
     .\configureIam.ps1 -json iamConfig.json
@@ -91,6 +97,22 @@ Function configureEnvironment
         }
     }
 
+    Write-LogMessage -Message "Checking if VMware PowerCLI is installed"
+    $powerCli = Get-InstalledModule -Name VMware.PowerCLI -ErrorAction SilentlyContinue
+    if (!$powerCli) {
+        Write-LogMessage -Message "VMware PowerCLI not found, please install and retry" -Colour Green; Exit
+    }
+    else {
+        Write-LogMessage -Message "VMware PowerCLI Found" -Colour Green
+        #Get-Module -Name VMware* -ListAvailable | Import-Module | Out-File $logFile -Encoding ASCII -Append
+        Write-LogMessage -Message "Configuring PowerShell CEIP Setting"
+        $setCLIConfigurationCEIP = Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP $false -Confirm:$false -warningaction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -Encoding ASCII -Append
+        Write-LogMessage -Message "Configuring PowerShell Certifcate Setting"
+        $setCLIConfigurationCerts = Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$False -Scope AllUsers -warningaction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -Encoding ASCII -Append
+        Write-LogMessage -Message "Permitting Multiple Default VI Servers"
+        $setCLIConfigurationVIServers = Set-PowerCLIConfiguration -DefaultVIServerMode multiple -Confirm:$false -Scope AllUsers -warningaction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -Encoding ASCII -Append
+    }
+
     Write-LogMessage -Message "Checking that the VMware OVF Tool is installed"
     $ovfToolPath = 'C:\Program Files\VMware\VMware OVF Tool\ovftool.exe'
     $ovfToolsPresent = Test-Path -Path $ovfToolPath
@@ -100,66 +122,6 @@ Function configureEnvironment
     else {
         Write-LogMessage -Message "VMware OVF Tool Found" -Colour Green
     }
-}
-
-Function importPowerCLI
-{
-    LogMessage -message "Importing PowerCLI Modules"
-    Try
-    {
-        Import-Module -Name VMware.VimAutomation.Common | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null
-    }
-    Catch
-    {
-        Install-Module -Name VMware.VimAutomation.Common -confirm:$false | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null
-    }
-    Try
-    {
-        Import-Module -Name VMware.VimAutomation.Core | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null    
-    }
-    Catch
-    {
-        Install-Module -Name VMware.VimAutomation.Core -confirm:$false | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null       
-    }
-    Try
-    {
-        Import-Module -Name VMware.VimAutomation.License | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null    
-    }
-    Catch
-    {
-        Install-Module -Name VMware.VimAutomation.License -confirm:$false | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null
-    }
-    Try
-    {
-        Import-Module -Name VMware.VimAutomation.Nsxt | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null    
-    }
-    Catch
-    {
-        Install-Module -Name VMware.VimAutomation.Nsxt -confirm:$false | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null
-    }
-    Try
-    {
-        Import-Module -Name VMware.VimAutomation.Storage | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null    
-    }
-    Catch
-    {
-        Install-Module -Name VMware.VimAutomation.Storage -confirm:$false | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null
-    }
-    Try
-    {
-        Import-Module -Name VMware.VimAutomation.Vds | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null    
-    }
-    Catch
-    {
-        Install-Module -Name VMware.VimAutomation.Vds -confirm:$false | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null
-    }
-    LogMessage -message "Configuring PowerShell CEIP Setting"
-    $setCLIConfigurationCEIP = Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP $false -Confirm:$false -warningaction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null
-    LogMessage -message "Configuring PowerShell Certifcate Setting"
-    $setCLIConfigurationCerts = Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$False -Scope AllUsers -warningaction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null
-    LogMessage -message "Permitting Multiple Default VI Servers"
-    $setCLIConfigurationVIServers = Set-PowerCLIConfiguration -DefaultVIServerMode multiple -Confirm:$false -Scope AllUsers -warningaction SilentlyContinue -InformationAction SilentlyContinue 2>&1 | Out-File $logFile -encoding ASCII -append #2>&1 | Out-Null
-    $ProgressPreference = $OriginalPref
 }
 
 Function connectVsphere ($hostname, $user, $password) {
@@ -358,6 +320,9 @@ Try {
         
         $wsaFqdn = $configJson.wsaSpec.wsaFqdn
         $wsaHostname = $wsaFqdn.Split(".")[0]
+        $wsaRootPassword = $configJson.wsaSpec.wsaRootPassword
+        $wsaSshUserPassword = $configJson.wsaSpec.wsaSshUserPassword
+        $wsaAdminPassword = $configJson.wsaSpec.wsaAdminPassword
         $wsaIpAddress = $configJson.wsaSpec.wsaIpAddress
         $wsaGateway = $configJson.wsaSpec.wsaGateway
         $wsaSubnetMask = $configJson.wsaSpec.wsaSubnetMask
@@ -366,10 +331,27 @@ Try {
         $wsaFolderName = $configJson.wsaSpec.wsaFolderName
         $wsaDomainBindUser = $configJson.wsaSpec.domainBindUser
         $wsaDomainBindPassword = $configJson.wsaSpec.domainBindPassword
+        $rootCa = $configJson.wsaSpec.rootCa
+        $wsaCertKey = $configJson.wsaSpec.wsaCertKey
+        $wsaCert = $configJson.wsaSpec.wsaCert
+        $rootCaPath = $PSScriptRoot + "\" + $rootCa
+        $wsaCertKeyPath = $PSScriptRoot + "\" + $wsaCertKey
+        $wsaCertPath = $PSScriptRoot + "\" + $wsaCert
 
         Write-LogMessage  -Message "Checking for Workspace ONE Access OVA File" -Colour Yellow
         if (!(Test-Path -Path $wsaOvaPath)) {
             Write-LogMessage  -Message "Workspace ONE Access OVA File Not Found" -Colour Red; Exit
+        }
+
+        Write-LogMessage  -Message "Checking for Workspace ONE Access Certificate Files" -Colour Yellow
+        if (!(Test-Path -Path $rootCaPath)) {
+            Write-LogMessage  -Message "Root Certificate cannot be found, ensure its present in the script folder" -Colour Red; Exit
+        }
+        if (!(Test-Path -Path $wsaCertKeyPath)) {
+            Write-LogMessage  -Message "Workspace ONE Access Private Key cannot be found, ensure its present in the script folder" -Colour Red; Exit
+        }
+        if (!(Test-Path -Path $wsaCertPath)) {
+            Write-LogMessage  -Message "Workspace ONE Access Certificate cannot be found, ensure its present in the script folder" -Colour Red; Exit
         }
 
         # Dynamically obtain details from SDDC Manager and vCenter Server
@@ -391,11 +373,10 @@ Try {
     }
     else {
         Write-LogMessage  -Message "JSON File Not Found" -Colour Red; Exit
-    }
-
-    
+    }  
 
     if ($DefaultVIServer.Name -eq $vCenterFqdn) {
+
         # Add Active Directory over LDAP as Identity Provider to vCenter Server and Set as Default
         Try {
             Write-LogMessage -Message "Add Active Directory over LDAP as Identity Provider to vCenter Server and Set as Default" -Colour Yellow
@@ -449,9 +430,9 @@ Try {
             Debug-CatchWriter -object $_
         }
 
-        # Assign Active Directory Groups to Roles in SDDC Manager
+        # Assign Active Directory Groups to the Admin, Operator and Viewer Roles in SDDC Manager
         Try {
-            Write-LogMessage -Message "Assign Active Directory Groups to Roles in SDDC Manager" -Colour Yellow
+            Write-LogMessage -Message "Assign Active Directory Groups to the Admin, Operator and Viewer Roles in SDDC Manager" -Colour Yellow
             createSddcManagerRole -adGroup $vcfAdmin -adDomain $domain -secureCreds $creds -vcfRole ADMIN
             createSddcManagerRole -adGroup $vcfOperator -adDomain $domain -secureCreds $creds -vcfRole OPERATOR
             createSddcManagerRole -adGroup $vcfViewer -adDomain $domain -secureCreds $creds -vcfRole VIEWER
@@ -496,9 +477,9 @@ Try {
 
         disconnectVsphere -hostname $vCenterFqdn # Disconnect from vCenter Server
 
-        # Assign Active Directory Group to each ESXi Host for Administration
+        # Assign an Active Directory Group to each ESXi Host for Administration
         Try {
-            Write-LogMessage -Message "Assign Active Directory Group to each ESXi Host for Administration" -Colour Yellow
+            Write-LogMessage -Message "Assign an Active Directory Group to each ESXi Host for Administration" -Colour Yellow
 
             $groupName = $esxiAdmin.Split("\")[1]
             Write-LogMessage -Message "Checking if Active Directory Group '$groupName' is present in Active Directory Domain"
@@ -555,7 +536,7 @@ Try {
                     Write-LogMessage -Message  "Created VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn Successfully" -Colour Green
                 }
                 else {
-                    Write-LogMessage -Message "reating VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn Failed" -Colour Red
+                    Write-LogMessage -Message "Creating VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn Failed" -Colour Red
                 }
             }
 
@@ -608,16 +589,7 @@ Try {
                         } Until($finished)
                         if ($ScriptSuccessOutput) {
                             Write-LogMessage -Message "Deployment of $wsaHostname using $wsaOvaPath completed Successfully" -Colour Green
-                            #Setting NTP
-                            #LogMessage -message "Setting NTP Configuration on $wsaHostname"
-                            #$scriptCommand = 'sed /^server/d /etc/ntp.conf > MNtp_Config.txt'
-                            #Invoke-VMScript -VM $wsaHost.hostname -ScriptText $scriptCommand -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append 
-                            #$scriptCommand = "sed -i '93iserver $($sharedDetails.ntpserver1)' MNtp_Config.txt"
-                            #Invoke-VMScript -VM $wsaHost.hostname -ScriptText $scriptCommand -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append 
-                            #LogMessage -message "Configuring and Starting NTP Services"
-                            #$scriptCommand = 'mv /root/MNtp_Config.txt /etc/ntp.conf;vmware-toolbox-cmd timesync disable;chkconfig ntp on;service ntp start'
-                            #Invoke-VMScript -VM $wsaHost.hostname -ScriptText $scriptCommand -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append 
-                        }
+                           }
                         elseif ($ScriptErrorOutput) {
                             Write-LogMessage -Message "$wsaHostname failed to initialize properly. Please delete the VM from $vcenterFqdn and retry."
                             Exit
@@ -631,6 +603,94 @@ Try {
                     Write-LogMessage -Message "Workspace ONE Access Failed to deploy. Please check for errors in $logFile" -Colour Red    
                 }
             }
+
+            # Perform Initial Configuration of Workspace ONE Access Virtual Appliance
+            Write-LogMessage -Message "Perform Initial Configuration of Workspace ONE Access Virtual Appliance" -Colour Yellow
+            $baseUri = "https://"+$wsaFqdn+":8443"
+            Write-LogMessage -Message "Connecting to Workspace ONE Access Virtual Appliance to obtain a token"
+            $uri = $baseUri + "/login"
+            $response = Invoke-RestMethod $uri -Method 'GET' -SessionVariable webSession
+            $response | Out-File wsaResponse.txt
+            $tokenSource = (Select-String -Path wsaResponse.txt -Pattern 'window.ec_wiz.vk =')
+            $token = ($tokenSource -Split ("'"))[1]
+            Remove-Item wsaResponse.txt
+            if ($token) {
+                $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+                $headers.Add("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                $headers.Add("X-Vk", "$token")
+                $headers.Add("Accept", "application/json")
+
+                Write-LogMessage -Message "Setting the Admin Password for Workspace ONE Access Virtual Appliance $wsaFqdn"
+                $body = "password="+$wsaAdminPassword+"&confpassword="+$wsaAdminPassword
+                $uri = $baseUri + "/cfg/changePassword"
+                Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body -WebSession $webSession | Out-File $logFile -Encoding ASCII -Append
+
+                Write-LogMessage -Message "Setting the Root & SSHUser Passwords for Workspace ONE Access Virtual Appliance $wsaFqdn"
+                $body = "rootPassword="+$wsaRootPassword+"&sshuserPassword="+$wsaSshUserPassword
+                $uri = $baseUri + "/cfg/system"
+                Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body -WebSession $webSession | Out-File $logFile -Encoding ASCII -Append
+
+                Write-LogMessage -Message "Starting the Internal Database for Workspace ONE Access Virtual Appliance $wsaFqdn"
+                $uri = $baseUri + "/cfg/setup/initialize"
+                Invoke-RestMethod $uri -Method 'POST' -Headers $headers -WebSession $webSession | Out-File $logFile -Encoding ASCII -Append
+
+                Write-LogMessage -Message "Activating the default connector Workspace ONE Access Virtual Appliance $wsaFqdn" 
+                $uri = $baseUri + "/cfg/setup/activateConnector"
+                Invoke-RestMethod $uri -Method 'POST' -Headers $headers -WebSession $webSession | Out-File $logFile -Encoding ASCII -Append
+                Write-LogMessage -Message "Initial configuration of Workspace ONE Access Virtual Appliance $wsaFqdn completed Succesfully" -Colour Green
+            }
+            else {
+                Write-LogMessage -Message "Initial configuration of Workspace ONE Access Virtual Appliance $wsaFqdn has already been performed" -Colour Magenta
+            }
+<#
+            # Setting the the Admin Password on Workspace One Access Virtual Appliance
+            Write-LogMessage -Message "Setting the the Admin Password on Workspace One Access Virtual Appliance" -Colour Yellow
+            $scriptCommand = 'echo '+$wsaAdminPassword+' | /usr/sbin/hznAdminTool setSystemAdminPassword --pass '+$wsaAdminPassword
+            $output = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptCommand -GuestUser root -GuestPassword $wsaRootPassword; $output | Out-File $logFile -Encoding ASCII -Append
+            if (($output.ScriptOutput).Contains("Successfully set admin password")) {
+                Write-LogMessage -Message "Set the the Admin Password on $wsaFqdn Successfully" -Colour Green
+            }
+            else {
+                Write-LogMessage -Message "Setting the the Admin Password on $wsaFqdn Failed" -Colour Red
+            }
+#>
+        
+            # Configure NTP Server on Workspace ONE Access Appliance
+            Write-LogMessage -Message "Configure NTP Server on Workspace One Access Virtual Appliance" -Colour Yellow
+            Write-LogMessage -Message "Checking if NTP Server '$ntpServer' has been configured on Workspace One Access Virtual Appliance $wsaFqdn"
+            $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --get'
+            $output = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptCommand -GuestUser root -GuestPassword $wsaRootPassword; $output | Out-File $logFile -Encoding ASCII -Append
+            if (($output.ScriptOutput).Contains($ntpServer)) {
+                Write-LogMessage -Message "NTP Server '$ntpServer' already configured on Workspace One Access Virtual Appliance $wsaFqdn" -Colour Magenta
+            }
+            else {
+                Write-LogMessage -Message "Attempting to configure NTP Server '$ntpServer' on Workspace One Access Virtual Appliance $wsaFqdn"
+                $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --set '+$ntpServer
+                $output = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptCommand -GuestUser root -GuestPassword $wsaRootPassword; $output | Out-File $logFile -Encoding ASCII -Append
+                Write-LogMessage -Message "Checking to see if configuring NTP Server '$ntpServer' on Workspace One Access Virtual Appliance $wsaFqdn completed correctly"
+                $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --get'
+                $output = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptCommand -GuestUser root -GuestPassword $wsaRootPassword; $output | Out-File $logFile -Encoding ASCII -Append
+                if (($output.ScriptOutput).Contains($ntpServer)) {
+                    Write-LogMessage -Message "Configured NTP Server '$ntpServer' on Workspace One Access Virtual Appliance $wsaFqdn Successfully" -Colour Green
+                }
+                else {
+                    Write-LogMessage -Message "Configuring NTP Server '$ntpServer' on Workspace One Access Virtual Appliance $wsaFqdn Failed" -Colour Red
+                }
+            }
+
+            # Install a Signed Certificate on Workspace ONE Access Appliance
+            Write-LogMessage -Message "Install a Signed Certificate on Workspace One Access Virtual Appliance" -Colour Yellow
+            Write-LogMessage -Message "Copying Certificate Files to Workspace One Access Virtual Appliance $wsaFqdn"
+            $SecurePassword = ConvertTo-SecureString -String $wsaSshUserPassword -AsPlainText -Force
+            $secureCreds = New-Object System.Management.Automation.PSCredential ("sshuser", $SecurePassword)
+            Set-SCPFile -ComputerName $wsaFqdn -Credential $secureCreds -RemotePath '/tmp' -LocalFile $rootCaPath -NoProgress -AcceptKey $true -Force -WarningAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
+            Set-SCPFile -ComputerName $wsaFqdn -Credential $secureCreds -RemotePath '/tmp' -LocalFile $wsaCertKeyPath -NoProgress -AcceptKey $true -Force -WarningAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
+            Set-SCPFile -ComputerName $wsaFqdn -Credential $secureCreds -RemotePath '/tmp' -LocalFile $wsaCertPath -NoProgress -AcceptKey $true -Force -WarningAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
+            Write-LogMessage -Message "Installing Signed Certifcate $wsaCert on Workspace One Access Virtual Appliance $wsaFqdn"
+            $scriptCommand = 'echo "yes" | /usr/local/horizon/scripts/installExternalCertificate.hzn --ca /tmp/'+$rootCa+' --cert /tmp/'+$wsaCert+' --key /tmp/'+$wsaCertKey
+            $output = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptCommand -GuestUser root -GuestPassword $wsaRootPassword; $output | Out-File $logFile -Encoding ASCII -Append
+            Write-LogMessage -Message "Installed Signed Certifcate $wsaCert on Workspace One Access Virtual Appliance $wsaFqdn Successfully" -Colour Green
+
             disconnectVsphere -hostname $vCenterFqdn # Disconnect from vCenter Server
         }
         Catch {

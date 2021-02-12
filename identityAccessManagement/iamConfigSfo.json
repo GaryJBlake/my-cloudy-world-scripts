@@ -37,12 +37,18 @@
     "wsaSpec": {
         "wsaOva": "identity-manager-3.3.4.0-17451211_OVF10.ova",
         "wsaFqdn": "sfo-wsa01.sfo.rainpole.io",
+        "wsaRootPassword": "VMw@re1!",
+        "wsaSshUserPassword": "VMw@re1!",
+        "wsaAdminPassword": "VMw@re1!",
         "wsaIpAddress": "192.168.31.60",
         "wsaGateway": "192.168.31.1",
         "wsaSubnetMask": "255.255.255.0",
         "wsaPasswors": "VMw@re1!",
         "wsaFolderName": "sfo-m01-fd-wsa",
         "domainBindUser": "svc-wsa-ad",
-		"domainBindPassword": "VMw@re1!"
+        "domainBindPassword": "VMw@re1!",
+        "rootCa": "Root64.cer",
+        "wsaCertKey": "sfo-wsa01.key",
+        "wsaCert": "sfo-wsa01.1.cer"
     }
 }
