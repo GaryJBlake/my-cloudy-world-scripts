@@ -43,7 +43,6 @@
         "wsaIpAddress": "192.168.32.60",
         "wsaGateway": "192.168.32.1",
         "wsaSubnetMask": "255.255.255.0",
-        "wsaPasswords": "VMw@re1!",
         "wsaFolderName": "lax-m01-fd-wsa",
         "domainBindUser": "svc-wsa-ad",
         "domainBindPassword": "VMw@re1!",

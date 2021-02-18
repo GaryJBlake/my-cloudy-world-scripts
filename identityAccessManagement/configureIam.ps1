@@ -31,14 +31,13 @@
 #>
 
 Param (
-    [Parameter(mandatory=$true)]
-        [String]$json
+    [Parameter(mandatory = $true)]
+    [String]$json
 )
 
 $powerVcfVersion = "2.1.1"
 
-Function configureEnvironment 
-{    
+Function configureEnvironment {    
     $ErrorActionPreference = "Stop"
     #change size, buffer and Background
     if ($Env:OS = "Windows_NT") {  
@@ -48,15 +47,15 @@ Function configureEnvironment
         else {
             $width = 200
         }
-        $height = $((Get-Host).UI.RawUI.MaxWindowSize.Height-2)
+        $height = $((Get-Host).UI.RawUI.MaxWindowSize.Height - 2)
         $Console = $host.ui.rawui
-        $Buffer  = $Console.BufferSize
+        $Buffer = $Console.BufferSize
         $ConSize = $Console.WindowSize
 
         # If the Buffer is wider than the new console setting, first reduce the buffer, then do the resize
         if ($Buffer.Width -gt $Width ) {
-           $ConSize.Width = $Width
-           $Console.WindowSize = $ConSize
+            $ConSize.Width = $Width
+            $Console.WindowSize = $ConSize
         }
         $Buffer.Width = $Width
         $ConSize.Width = $Width
@@ -93,7 +92,7 @@ Function configureEnvironment
             Write-LogMessage -Message "PowerVCF $powerVcfVersion Installed Successfully" -Colour Green
         }
         else {
-            Write-Host "";Write-Host -Object " Issue installing PowerVCF Module $powerVcfVersion" -ForegroundColor Red; Exit
+            Write-Host ""; Write-Host -Object " Issue installing PowerVCF Module $powerVcfVersion" -ForegroundColor Red; Exit
         }
     }
 
@@ -151,11 +150,11 @@ Function connectVcf ($fqdn, $username, $password) {
     Try {
         if (Test-Connection -ComputerName $fqdn -ErrorAction SilentlyContinue) {
             Write-LogMessage -Message "Checking that connection to SDDC Manager $fqdn is possible"
-            $connection =  Request-VCFToken -fqdn $fqdn -username $username -password $password
-            if ($connection.success) {Write-LogMessage -Message "$($connection.success)" -Colour Green}
+            $connection = Request-VCFToken -fqdn $fqdn -username $username -password $password
+            if ($connection.success) { Write-LogMessage -Message "$($connection.success)" -Colour Green }
         }
         else {
-            if ($connection.error) {Write-LogMessage -Message "$($connection.error)" -Colour Red}
+            if ($connection.error) { Write-LogMessage -Message "$($connection.error)" -Colour Red }
         }
     }
     Catch {
@@ -164,7 +163,7 @@ Function connectVcf ($fqdn, $username, $password) {
 }
 
 Function New-GlobalPermission {
-<#
+    <#
     .DESCRIPTION Script to add/remove vSphere Global Permission
     .NOTES  Author:  William Lam. Modified by Ken Gould to permit principal type (user or group)
     .NOTES  Site:    www.virtuallyghetto.com
@@ -183,13 +182,13 @@ Function New-GlobalPermission {
         Whether or not to propgate the permission assignment (true/false)
 #>
     Param (
-        [Parameter(Mandatory=$true)][string]$vc_server,
-        [Parameter(Mandatory=$true)][String]$vc_username,
-        [Parameter(Mandatory=$true)][String]$vc_password,
-        [Parameter(Mandatory=$true)][String]$vc_user,
-        [Parameter(Mandatory=$true)][String]$vc_role_id,
-        [Parameter(Mandatory=$true)][String]$propagate,
-        [Parameter(Mandatory=$true)][String]$type
+        [Parameter(Mandatory = $true)][string]$vc_server,
+        [Parameter(Mandatory = $true)][String]$vc_username,
+        [Parameter(Mandatory = $true)][String]$vc_password,
+        [Parameter(Mandatory = $true)][String]$vc_user,
+        [Parameter(Mandatory = $true)][String]$vc_role_id,
+        [Parameter(Mandatory = $true)][String]$propagate,
+        [Parameter(Mandatory = $true)][String]$type
     )
     
     $secpasswd = ConvertTo-SecureString $vc_password -AsPlainText -Force
@@ -198,8 +197,8 @@ Function New-GlobalPermission {
     # vSphere MOB URL to private enableMethods
     $mob_url = "https://$vc_server/invsvc/mob3/?moid=authorizationService&method=AuthorizationService.AddGlobalAccessControlList"
     
-# Ingore SSL Warnings
-add-type -TypeDefinition  @"
+    # Ingore SSL Warnings
+    add-type -TypeDefinition  @"
         using System.Net;
         using System.Security.Cryptography.X509Certificates;
         public class TrustAllCertsPolicy : ICertificatePolicy {
@@ -210,33 +209,33 @@ add-type -TypeDefinition  @"
             }
         }
 "@
-[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+    [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
     
-        # Initial login to vSphere MOB using GET and store session using $vmware variable
-        $results = Invoke-WebRequest -Uri $mob_url -SessionVariable vmware -Credential $credential -Method GET
+    # Initial login to vSphere MOB using GET and store session using $vmware variable
+    $results = Invoke-WebRequest -Uri $mob_url -SessionVariable vmware -Credential $credential -Method GET
     
-        # Extract hidden vmware-session-nonce which must be included in future requests to prevent CSRF error
-        # Credit to https://blog.netnerds.net/2013/07/use-powershell-to-keep-a-cookiejar-and-post-to-a-web-form/ for parsing vmware-session-nonce via Powershell
-        if($results.StatusCode -eq 200) {
-            $null = $results -match 'name="vmware-session-nonce" type="hidden" value="?([^\s^"]+)"'
-            $sessionnonce = $matches[1]
-        } else {
-            LogMessage "Failed to login to vSphere MOB" Red
-            exit 1
-        }
+    # Extract hidden vmware-session-nonce which must be included in future requests to prevent CSRF error
+    # Credit to https://blog.netnerds.net/2013/07/use-powershell-to-keep-a-cookiejar-and-post-to-a-web-form/ for parsing vmware-session-nonce via Powershell
+    if ($results.StatusCode -eq 200) {
+        $null = $results -match 'name="vmware-session-nonce" type="hidden" value="?([^\s^"]+)"'
+        $sessionnonce = $matches[1]
+    }
+    else {
+        LogMessage "Failed to login to vSphere MOB" Red
+        exit 1
+    }
     
-        # Escape username
-        $vc_user_escaped = [uri]::EscapeUriString($vc_user)
+    # Escape username
+    $vc_user_escaped = [uri]::EscapeUriString($vc_user)
     
-        # The POST data payload must include the vmware-session-nonce variable + URL-encoded
-    If ($type -eq "group")
-    {
+    # The POST data payload must include the vmware-session-nonce variable + URL-encoded
+    If ($type -eq "group") {
         $body = @"
 vmware-session-nonce=$sessionnonce&permissions=%3Cpermissions%3E%0D%0A+++%3Cprincipal%3E%0D%0A++++++%3Cname%3E$vc_user_escaped%3C%2Fname%3E%0D%0A++++++%3Cgroup%3Etrue%3C%2Fgroup%3E%0D%0A+++%3C%2Fprincipal%3E%0D%0A+++%3Croles%3E$vc_role_id%3C%2Froles%3E%0D%0A+++%3Cpropagate%3E$propagate%3C%2Fpropagate%3E%0D%0A%3C%2Fpermissions%3E
 "@        
     }
     else {
-            $body = @"
+        $body = @"
 vmware-session-nonce=$sessionnonce&permissions=%3Cpermissions%3E%0D%0A+++%3Cprincipal%3E%0D%0A++++++%3Cname%3E$vc_user_escaped%3C%2Fname%3E%0D%0A++++++%3Cgroup%3Efalse%3C%2Fgroup%3E%0D%0A+++%3C%2Fprincipal%3E%0D%0A+++%3Croles%3E$vc_role_id%3C%2Froles%3E%0D%0A+++%3Cpropagate%3E$propagate%3C%2Fpropagate%3E%0D%0A%3C%2Fpermissions%3E
 "@
     }
@@ -253,17 +252,17 @@ vmware-session-nonce=$sessionnonce&permissions=%3Cpermissions%3E%0D%0A+++%3Cprin
 Function createSddcManagerRole ($adGroup, $adDomain, $secureCreds, $vcfRole) {
     $groupName = $adGroup.Split("\")[1]
     Write-LogMessage -Message "Checking if Active Directory Group '$groupName' is present in Active Directory Domain"
-    if (Get-ADGroup -Server $adDomain -Credential $secureCreds -Filter {SamAccountName -eq $groupName}) {
+    if (Get-ADGroup -Server $adDomain -Credential $secureCreds -Filter { SamAccountName -eq $groupName }) {
         Write-LogMessage -Message "Checking if Active Directory Group '$adGroup' has already been assigned the $vcfRole role in SDDC Manager"
-        $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $adGroup}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
+        $groupCheck = Get-VCFUser | Where-Object { $_.name -eq $adGroup }; $groupCheck | Out-File $logFile -Encoding ASCII -Append
         if ($groupCheck.name -eq $adGroup) {
-           Write-LogMessage -Message "Active Directory Group '$adGroup' already assigned the $vcfRole role in SDDC Manager" -Colour Magenta
+            Write-LogMessage -Message "Active Directory Group '$adGroup' already assigned the $vcfRole role in SDDC Manager" -Colour Magenta
         }
         else {
             Write-LogMessage -Message "Adding Active Directory Group '$adGroup' the $vcfRole role in SDDC Manager"
             New-VCFGroup -group $adGroup.Split("\")[1] -domain $adDomain -role $vcfRole | Out-File $logFile -Encoding ASCII -Append
             Write-LogMessage -Message "Checking if Active Directory Group '$adGroup' was added correctly"
-            $groupCheck = Get-VCFUser | Where-Object {$_.name -eq $adGroup}; $groupCheck | Out-File $logFile -Encoding ASCII -Append
+            $groupCheck = Get-VCFUser | Where-Object { $_.name -eq $adGroup }; $groupCheck | Out-File $logFile -Encoding ASCII -Append
             if ($groupCheck.name -eq $adGroup) {
                 Write-LogMessage -Message "Active Directory Group '$adGroup' assigned the $vcfRole role in SDDC Manager Successfully" -Colour Green
             }
@@ -357,19 +356,19 @@ Try {
         # Dynamically obtain details from SDDC Manager and vCenter Server
         connectVcf -fqdn $sddcMgrFqdn -username $sddcMgrUser -password $sddcMgrPassword
 
-        $vCenterFqdn = (Get-VCFWorkloadDomain | Where-Object {$_.type -eq "MANAGEMENT"}).vcenters.fqdn
+        $vCenterFqdn = (Get-VCFWorkloadDomain | Where-Object { $_.type -eq "MANAGEMENT" }).vcenters.fqdn
         $vCenterVmName = $vCenterFqdn.Split(".")[0]
          
         connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
 
         $ntpServer = (Get-VCFConfigurationNTP).ipAddress
-        $dnsServer1 = (Get-VCFConfigurationDNS | Where-Object {$_.isPrimary -Match "True"}).ipAddress
-        $dnsServer2 = (Get-VCFConfigurationDNS | Where-Object {$_.isPrimary -Match "False"}).ipAddress
+        $dnsServer1 = (Get-VCFConfigurationDNS | Where-Object { $_.isPrimary -Match "True" }).ipAddress
+        $dnsServer2 = (Get-VCFConfigurationDNS | Where-Object { $_.isPrimary -Match "False" }).ipAddress
 
-        $cluster = (Get-VCFCluster | Where-Object {$_.id -eq ((Get-VCFWorkloadDomain | Where-Object {$_.type -eq "MANAGEMENT"}).clusters.id)}).Name
-        $datastore = (Get-VCFCluster | Where-Object {$_.id -eq ((Get-VCFWorkloadDomain | Where-Object {$_.type -eq "MANAGEMENT"}).clusters.id)}).primaryDatastoreName
+        $cluster = (Get-VCFCluster | Where-Object { $_.id -eq ((Get-VCFWorkloadDomain | Where-Object { $_.type -eq "MANAGEMENT" }).clusters.id) }).Name
+        $datastore = (Get-VCFCluster | Where-Object { $_.id -eq ((Get-VCFWorkloadDomain | Where-Object { $_.type -eq "MANAGEMENT" }).clusters.id) }).primaryDatastoreName
         $datacenter = (Get-Datacenter -Cluster $cluster).Name
-        $regionaPortgroup = (Get-VCFApplicationVirtualNetwork | Where-Object {$_.regionType -eq "REGION_A"}).name
+        $regionaPortgroup = (Get-VCFApplicationVirtualNetwork | Where-Object { $_.regionType -eq "REGION_A" }).name
     }
     else {
         Write-LogMessage  -Message "JSON File Not Found" -Colour Red; Exit
@@ -381,14 +380,14 @@ Try {
         Try {
             Write-LogMessage -Message "Add Active Directory over LDAP as Identity Provider to vCenter Server and Set as Default" -Colour Yellow
             Write-LogMessage -Message "Checking if the Identity Source $domain has already been set on vCenter Server $vCenterFqdn"
-            $scriptCommand = '/opt/vmware/bin/sso-config.sh -get_identity_sources'
+            $scriptCommand = '/opt/vmware/bin/sso-config.sh -get_identity_sources'; $scriptCommand | Out-File $logFile -Encoding ASCII -Append
             $output = Invoke-VMScript -VM $vCenterVmName -ScriptText $scriptCommand -GuestUser $vCenterRootUser -GuestPassword $vCenterRootPassword -ErrorAction SilentlyContinue; $output | Out-File $logFile -Encoding ASCII -Append
             if (($output.ScriptOutput).Contains($domain)) {
                 Write-LogMessage -Message "Identity Source $domain already added to vCenter Server $vCenterFqdn" -Colour Magenta
             }
             else {
                 Write-LogMessage -Message "Adding $domain as an Identity Source on vCenter Server $vCenterFqdn with user $vcenterDomainBindUser"
-                $scriptCommand = '/opt/vmware/bin/sso-config.sh -add_identity_source -type adldap -baseUserDN '+$baseUserDn+' -baseGroupDN '+$baseGroupDn+' -domain '+$domain+' -alias '+$domainAlias+' -username '+$vcenterDomainBindUser+' -password '+$vcenterDomainBindPassword+' -primaryURL '+$primaryUrl+''
+                $scriptCommand = '/opt/vmware/bin/sso-config.sh -add_identity_source -type adldap -baseUserDN ' + $baseUserDn + ' -baseGroupDN ' + $baseGroupDn + ' -domain ' + $domain + ' -alias ' + $domainAlias + ' -username ' + $vcenterDomainBindUser + ' -password ' + $vcenterDomainBindPassword + ' -primaryURL ' + $primaryUrl + ''
                 $output = Invoke-VMScript -VM $vCenterVmName -ScriptText $scriptCommand -GuestUser $vCenterRootUser -GuestPassword $vCenterRootPassword; $output | Out-File $logFile -Encoding ASCII -Append
                 Write-LogMessage -Message "Checking if Identity Source $domain was added correctly"
                 $scriptCommand = '/opt/vmware/bin/sso-config.sh -get_identity_sources'
@@ -402,7 +401,7 @@ Try {
                     Exit
                 }
                 Write-LogMessage -Message "Setting Identity Source $domain as Default in vCenter Server $vCenterFqdn"
-                $scriptCommand = '/opt/vmware/bin/sso-config.sh -set_default_identity_sources -i '+$domain+''
+                $scriptCommand = '/opt/vmware/bin/sso-config.sh -set_default_identity_sources -i ' + $domain + ''
                 $output = Invoke-VMScript -VM $vCenterVmName -ScriptText $scriptCommand -GuestUser $vCenterRootUser -GuestPassword $vCenterRootPassword; $output | Out-File $logFile -Encoding ASCII -Append
                 Write-LogMessage -Message "Confirmed setting $domain as Default Identity Source on vCenter Server $vCenterFqdn Successfully" -Colour Green
             }
@@ -415,7 +414,7 @@ Try {
         Try {
             Write-LogMessage -Message "Assign an Active Directory Group the Administrator Role as a Global Permission in vCenter Server" -Colour Yellow
             Write-LogMessage -Message "Checking if Active Directory Group '$vcAdmin' is present in Active Directory Domain"
-            if (Get-ADGroup -Server $domain -Credential $creds -Filter {SamAccountName -eq $vcAdmin}) {
+            if (Get-ADGroup -Server $domain -Credential $creds -Filter { SamAccountName -eq $vcAdmin }) {
                 Write-LogMessage -Message "Getting Role ID for 'Administrator' from vCenter Server $vCenterFqdn"
                 $roleId = (Get-VIRole -Name "Admin" | Select-Object -ExpandProperty Id)
                 Write-LogMessage -Message "Assigning Global Permission Role 'Administrator' to $vcAdmin in vCenter Server $vCenterFqdn"
@@ -445,7 +444,7 @@ Try {
         Try {
             Write-LogMessage -Message "Join each ESXi Host to the Active Directory Domain" -Colour Yellow
             $esxiHosts = Get-VMHost
-            $count=0
+            $count = 0
             Foreach ($esxiHost in $esxiHosts) {
                 Write-LogMessage -Message "Checking if ESXi Host $esxiHost is already joined to Active Directory Domain $domain"
                 $currentDomainState = Get-VMHostAuthentication -VMHost $esxiHost
@@ -462,13 +461,13 @@ Try {
                     else {
                         Write-LogMessage -Message "Adding ESXi Host $esxiHost to Active Directory Domain $domain Failed" -Colour Red
                         disconnectVsphere -hostname $vCenterFqdn # Disconnect from vCenter Server
-                    Exit
+                        Exit
                     }
                 }
                 else {
                     Write-LogMessage -Message "ESXi Host $esxiHost is already joined to Active Directory Domain $domain" -Colour Magenta
                 }
-                $count=$count+1
+                $count = $count + 1
             }
         }
         Catch {
@@ -483,12 +482,12 @@ Try {
 
             $groupName = $esxiAdmin.Split("\")[1]
             Write-LogMessage -Message "Checking if Active Directory Group '$groupName' is present in Active Directory Domain"
-            if (Get-ADGroup -Server $domain -Credential $creds -Filter {SamAccountName -eq $groupName}) {
-                $count=0
+            if (Get-ADGroup -Server $domain -Credential $creds -Filter { SamAccountName -eq $groupName }) {
+                $count = 0
                 Foreach ($esxiHost in $esxiHosts) {
                     connectVsphere -hostname $esxiHost -user $esxiRootUser -password $esxiRootPassword # Connect to ESXi Server
                     Write-LogMessage -Message "Checking to see if Active Directory Group $esxiAdmin has already been assigned permissions to $esxiHost"
-                    $checkPermission = Get-VIPermission | Where-Object {$_.Principal -eq $esxiAdmin}
+                    $checkPermission = Get-VIPermission | Where-Object { $_.Principal -eq $esxiAdmin }
                     if ($checkPermission.Principal -eq $esxiAdmin) {
                         Write-LogMessage -Message "Active Directory Group '$esxiAdmin' already assigned permissions to $esxiHost" -Colour Magenta
                     }
@@ -496,7 +495,7 @@ Try {
                         Write-LogMessage -Message "Adding Active Directory Group '$esxiAdmin' the Administrator role to $esxiHost"
                         New-VIPermission -Entity (Get-VMHost) -Principal $esxiAdmin -Propagate $true -Role Admin | Out-File $logFile -Encoding ASCII -Append
                         Write-LogMessage -Message "Checking if Active Directory Group '$esxiAdmin' was added correctly"
-                        $checkPermission = Get-VIPermission | Where-Object {$_.Principal -eq $esxiAdmin}
+                        $checkPermission = Get-VIPermission | Where-Object { $_.Principal -eq $esxiAdmin }
                         if ($checkPermission.Principal -eq $esxiAdmin) {
                             Write-LogMessage -Message "Active Directory Group '$esxiAdmin' assigned the Administrator role to $esxiHost Successfully" -Colour Green
                         }
@@ -505,7 +504,7 @@ Try {
                         }
                     }
                     disconnectVsphere -hostname $esxiHost # Disconnect from ESXi Server
-                    $count=$count+1
+                    $count = $count + 1
                 }
             }
             else {
@@ -529,7 +528,7 @@ Try {
             }
             else {
                 Write-LogMessage -Message "Creating VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn"
-                $folder = (Get-View (Get-View -viewtype datacenter -filter @{"name"=[string]$datacenter}).vmfolder).CreateFolder($wsaFolderName)
+                $folder = (Get-View (Get-View -viewtype datacenter -filter @{"name" = [string]$datacenter }).vmfolder).CreateFolder($wsaFolderName)
                 Write-LogMessage -Message "Checking if VM and Template Folder '$wsaFolderName' was created correctly"
                 $folderExists = (Get-Folder -Name $wsaFolderName -ErrorAction SilentlyContinue)
                 if ($folderExists) {
@@ -548,7 +547,7 @@ Try {
             }
             else {
                 Write-LogMessage -Message "No virtual machine called $wsaHostname found in vCenter Server $vCenterFqdn. Proceeding with Deployment"  					
-                $command = '"C:\Program Files\VMware\VMware OVF Tool\ovftool.exe" --noSSLVerify --acceptAllEulas  --allowAllExtraConfig --diskMode=thin --powerOn --name='+$wsaHostname+' --ipProtocol="IPv4" --ipAllocationPolicy="fixedAllocatedPolicy" --vmFolder='+$wsaFolderName+' --net:"Network 1"='+$regionaPortgroup+'  --datastore='+$datastore+' --X:injectOvfEnv --prop:vamitimezone='+$timezone+'  --prop:vami.ip0.IdentityManager='+$wsaIpAddress+' --prop:vami.netmask0.IdentityManager='+$wsaSubnetMask+' --prop:vami.hostname='+$wsaFqdn+' --prop:vami.gateway.IdentityManager='+$wsaGateway+' --prop:vami.domain.IdentityManager='+$domain+' --prop:vami.searchpath.IdentityManager='+$domain+' --prop:vami.DNS.IdentityManager='+$dnsServer1+','+$dnsServer2+' '+$wsaOvaPath+'  "vi://'+$vCenterAdminUser+':'+$vCenterAdminPassword+'@'+$vcenterFqdn+'/'+$datacenter+'/host/'+$cluster+'/"'
+                $command = '"C:\Program Files\VMware\VMware OVF Tool\ovftool.exe" --noSSLVerify --acceptAllEulas  --allowAllExtraConfig --diskMode=thin --powerOn --name=' + $wsaHostname + ' --ipProtocol="IPv4" --ipAllocationPolicy="fixedAllocatedPolicy" --vmFolder=' + $wsaFolderName + ' --net:"Network 1"=' + $regionaPortgroup + '  --datastore=' + $datastore + ' --X:injectOvfEnv --prop:vamitimezone=' + $timezone + '  --prop:vami.ip0.IdentityManager=' + $wsaIpAddress + ' --prop:vami.netmask0.IdentityManager=' + $wsaSubnetMask + ' --prop:vami.hostname=' + $wsaFqdn + ' --prop:vami.gateway.IdentityManager=' + $wsaGateway + ' --prop:vami.domain.IdentityManager=' + $domain + ' --prop:vami.searchpath.IdentityManager=' + $domain + ' --prop:vami.DNS.IdentityManager=' + $dnsServer1 + ',' + $dnsServer2 + ' ' + $wsaOvaPath + '  "vi://' + $vCenterAdminUser + ':' + $vCenterAdminPassword + '@' + $vcenterFqdn + '/' + $datacenter + '/host/' + $cluster + '/"'
                 $command | Out-File $logFile -Encoding ASCII -Append
                 Write-LogMessage -Message "This will take at least 10-15 minutes and maybe significantly longer depending on the environment. Please be patient" 
                 Invoke-Expression "& $command" | Out-File $logFile -Encoding ASCII -Append
@@ -584,12 +583,12 @@ Try {
                             $ScriptSuccessOutput = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptSuccess -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue
                             $ScriptErrorOutput = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptError -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue
                             If (($ScriptSuccessOutput.ScriptOutput) -OR ($scriptError.ScriptOutput)) {
-                                $finished=$true
+                                $finished = $true
                             }
                         } Until($finished)
                         if ($ScriptSuccessOutput) {
                             Write-LogMessage -Message "Deployment of $wsaHostname using $wsaOvaPath completed Successfully" -Colour Green
-                           }
+                        }
                         elseif ($ScriptErrorOutput) {
                             Write-LogMessage -Message "$wsaHostname failed to initialize properly. Please delete the VM from $vcenterFqdn and retry."
                             Exit
@@ -606,7 +605,7 @@ Try {
 
             # Perform Initial Configuration of Workspace ONE Access Virtual Appliance
             Write-LogMessage -Message "Perform Initial Configuration of Workspace ONE Access Virtual Appliance" -Colour Yellow
-            $baseUri = "https://"+$wsaFqdn+":8443"
+            $baseUri = "https://" + $wsaFqdn + ":8443"
             Write-LogMessage -Message "Connecting to Workspace ONE Access Virtual Appliance to obtain a token"
             $uri = $baseUri + "/login"
             $response = Invoke-RestMethod $uri -Method 'GET' -SessionVariable webSession
@@ -621,12 +620,12 @@ Try {
                 $headers.Add("Accept", "application/json")
 
                 Write-LogMessage -Message "Setting the Admin Password for Workspace ONE Access Virtual Appliance $wsaFqdn"
-                $body = "password="+$wsaAdminPassword+"&confpassword="+$wsaAdminPassword
+                $body = "password=" + $wsaAdminPassword + "&confpassword=" + $wsaAdminPassword
                 $uri = $baseUri + "/cfg/changePassword"
                 Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body -WebSession $webSession | Out-File $logFile -Encoding ASCII -Append
 
                 Write-LogMessage -Message "Setting the Root & SSHUser Passwords for Workspace ONE Access Virtual Appliance $wsaFqdn"
-                $body = "rootPassword="+$wsaRootPassword+"&sshuserPassword="+$wsaSshUserPassword
+                $body = "rootPassword=" + $wsaRootPassword + "&sshuserPassword=" + $wsaSshUserPassword
                 $uri = $baseUri + "/cfg/system"
                 Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body -WebSession $webSession | Out-File $logFile -Encoding ASCII -Append
 
@@ -642,7 +641,8 @@ Try {
             else {
                 Write-LogMessage -Message "Initial configuration of Workspace ONE Access Virtual Appliance $wsaFqdn has already been performed" -Colour Magenta
             }
-<#
+
+            <#
             # Setting the the Admin Password on Workspace One Access Virtual Appliance
             Write-LogMessage -Message "Setting the the Admin Password on Workspace One Access Virtual Appliance" -Colour Yellow
             $scriptCommand = 'echo '+$wsaAdminPassword+' | /usr/sbin/hznAdminTool setSystemAdminPassword --pass '+$wsaAdminPassword
@@ -653,7 +653,7 @@ Try {
             else {
                 Write-LogMessage -Message "Setting the the Admin Password on $wsaFqdn Failed" -Colour Red
             }
-#>
+            #>
         
             # Configure NTP Server on Workspace ONE Access Appliance
             Write-LogMessage -Message "Configure NTP Server on Workspace One Access Virtual Appliance" -Colour Yellow
@@ -665,7 +665,7 @@ Try {
             }
             else {
                 Write-LogMessage -Message "Attempting to configure NTP Server '$ntpServer' on Workspace One Access Virtual Appliance $wsaFqdn"
-                $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --set '+$ntpServer
+                $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --set ' + $ntpServer
                 $output = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptCommand -GuestUser root -GuestPassword $wsaRootPassword; $output | Out-File $logFile -Encoding ASCII -Append
                 Write-LogMessage -Message "Checking to see if configuring NTP Server '$ntpServer' on Workspace One Access Virtual Appliance $wsaFqdn completed correctly"
                 $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --get'
@@ -687,7 +687,7 @@ Try {
             Set-SCPFile -ComputerName $wsaFqdn -Credential $secureCreds -RemotePath '/tmp' -LocalFile $wsaCertKeyPath -NoProgress -AcceptKey $true -Force -WarningAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
             Set-SCPFile -ComputerName $wsaFqdn -Credential $secureCreds -RemotePath '/tmp' -LocalFile $wsaCertPath -NoProgress -AcceptKey $true -Force -WarningAction SilentlyContinue | Out-File $logFile -Encoding ASCII -Append
             Write-LogMessage -Message "Installing Signed Certifcate $wsaCert on Workspace One Access Virtual Appliance $wsaFqdn"
-            $scriptCommand = 'echo "yes" | /usr/local/horizon/scripts/installExternalCertificate.hzn --ca /tmp/'+$rootCa+' --cert /tmp/'+$wsaCert+' --key /tmp/'+$wsaCertKey
+            $scriptCommand = 'echo "yes" | /usr/local/horizon/scripts/installExternalCertificate.hzn --ca /tmp/' + $rootCa + ' --cert /tmp/' + $wsaCert + ' --key /tmp/' + $wsaCertKey
             $output = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptCommand -GuestUser root -GuestPassword $wsaRootPassword; $output | Out-File $logFile -Encoding ASCII -Append
             Write-LogMessage -Message "Installed Signed Certifcate $wsaCert on Workspace One Access Virtual Appliance $wsaFqdn Successfully" -Colour Green
 
