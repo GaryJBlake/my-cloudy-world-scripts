@@ -249,6 +249,7 @@ Function Add-GlobalPermission {
         [Parameter(Mandatory = $true)][String]$domainBindPass,
         [Parameter(Mandatory = $true)][String]$principal,
         [Parameter(Mandatory = $true)][String]$role,
+        [Parameter(Mandatory = $true)][ValidateSet("true","false")][String]$propagate,
         [Parameter(Mandatory = $true)][ValidateSet("group","user")][String]$type
     )
 
@@ -258,7 +259,7 @@ Function Add-GlobalPermission {
     Try {
         if (Get-ADGroup -Server $domain -Credential $domainCreds -Filter { SamAccountName -eq $principal }) {
             $roleId = (Get-VIRole -Name $role | Select-Object -ExpandProperty Id)
-            New-GlobalPermission -vcServer $server -vcUsername $user -vcPassword $pass -roleId $roleId -user $principal -propagate $true -type $type
+            New-GlobalPermission -vcServer $server -vcUsername $user -vcPassword $pass -roleId $roleId -user $principal -propagate $propagate -type $type
             Write-Output "Assigned Global Permission Role $role to '$principal' in vCenter Server $server Successfully"
         }
         else {
@@ -321,7 +322,7 @@ Function Join-ESXiJoinDomain {
         [Parameter(Mandatory = $true)][String]$domain,
         [Parameter(Mandatory = $true)][String]$domainJoinUser,
         [Parameter(Mandatory = $true)][String]$domainJoinPass
-    )  
+    )
 
     Try {
         $checkAdAuthentication = Test-ADAuthentication -user $domainJoinUser -pass $domainJoinPass -server $domain -domain $domain
@@ -357,6 +358,62 @@ Function Join-ESXiJoinDomain {
     }
 }
 Export-ModuleMember -Function Join-ESXiJoinDomain
+
+Function Add-ESXiDomainUser {
+    Param (
+        [Parameter(Mandatory = $true)][String]$vcServer,
+        [Parameter(Mandatory = $true)][String]$vcUser,
+        [Parameter(Mandatory = $true)][String]$vcPass,
+        [Parameter(Mandatory = $true)][String]$esxiUser,
+        [Parameter(Mandatory = $true)][String]$esxiPass,
+        [Parameter(Mandatory = $true)][String]$domain,
+        [Parameter(Mandatory = $true)][String]$domainBindUser,
+        [Parameter(Mandatory = $true)][String]$domainBindPass,
+        [Parameter(Mandatory = $true)][String]$principal,
+        [Parameter(Mandatory = $true)][String]$role,
+        [Parameter(Mandatory = $true)][ValidateSet("true","false")][String]$propagate
+    )
+
+    $securePass = ConvertTo-SecureString -String $domainBindPass -AsPlainText -Force
+    $domainCreds = New-Object System.Management.Automation.PSCredential ($domainBindUser, $securePass)
+
+    # Assign an Active Directory Group to each ESXi Host for Administration
+    Try {
+        Connect-VIServer -Server $vcServer -User $vcUser -Pass $vcPass # Connect to vCenter Server
+        $esxiHosts = Get-VMHost
+        Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue # Disconnect from vCenter Server
+
+        if (Get-ADGroup -Server $domain -Credential $domainCreds -Filter { SamAccountName -eq $principal }) {
+            $count = 0
+            Foreach ($esxiHost in $esxiHosts) {
+                Connect-VIServer -Server $esxiHost -User $esxiUser -Pass $esxiPass # Connect to ESXi Server
+                $checkPermission = Get-VIPermission | Where-Object { $_.Principal -eq $principal }
+                if ($checkPermission.Principal -eq $principal) {
+                    Write-Warning "Active Directory Group '$principal' already assigned permissions to $esxiHost"
+                }
+                else {
+                    New-VIPermission -Entity (Get-VMHost) -Principal $principal -Propagate $propagate -Role $role
+                    $checkPermission = Get-VIPermission | Where-Object { $_.Principal -eq $principal }
+                    if ($checkPermission.Principal -eq $principal) {
+                        Write-Output "Active Directory Group '$principal' assigned the Administrator role to $esxiHost Successfully"
+                    }
+                    else {
+                        Write-Error "Assigning Active Directory Group '$principal' the Administrator role to $esxiHost Failed"
+                    }
+                }
+                Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue # Disconnect from ESXi Server
+                $count = $count + 1
+            }
+        }
+        else {
+            Write-Error "Active Directory User/Group '$principal' not found in the Active Directory Domain, please create and retry"
+        }
+    }
+    Catch {
+        Debug-CatchWriter -object $_
+    }
+}
+Export-ModuleMember -Function Add-ESXiDomainUser
 
 ######### End Identity and Access Management  ##########
 
