@@ -333,50 +333,47 @@ Function Add-ESXiDomainUser {
 Export-ModuleMember -Function Add-ESXiDomainUser
 
 Function Install-WorkspaceOne {
-    # Deploy and Configure Workspace ONE Access Virtual Appliance
-        Try {
-            # Create VM and Template Folder
-            Write-LogMessage -Message "Create VM and Template Folder and Deploy the Workspace One Access Virtual Appliance" -Colour Yellow
-            connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
-            
-            Write-LogMessage -Message "Checking if VM and Template Folder '$wsaFolderName' already exists in vCenter Server $vCenterFqdn"
-            $folderExists = (Get-Folder -Name $wsaFolderName -ErrorAction SilentlyContinue)
-            if ($folderExists) {
-                Write-LogMessage -Message "The VM and Template Folder '$wsaFolderName' already exists in $vCenterFqdn" -colour Magenta
-            }
-            else {
-                Write-LogMessage -Message "Creating VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn"
-                $folder = (Get-View (Get-View -viewtype datacenter -filter @{"name" = [string]$datacenter }).vmfolder).CreateFolder($wsaFolderName)
-                Write-LogMessage -Message "Checking if VM and Template Folder '$wsaFolderName' was created correctly"
-                $folderExists = (Get-Folder -Name $wsaFolderName -ErrorAction SilentlyContinue)
-                if ($folderExists) {
-                    Write-LogMessage -Message  "Created VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn Successfully" -Colour Green
-                }
-                else {
-                    Write-LogMessage -Message "Creating VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn Failed" -Colour Red
-                }
-            }
+    # Deploy Workspace ONE Access Virtual Appliance
+    Param (
+        [Parameter(Mandatory = $true)][String]$vcServer,
+        [Parameter(Mandatory = $true)][String]$vcUser,
+        [Parameter(Mandatory = $true)][String]$vcPass,
+        [Parameter(Mandatory = $true)][String]$server,
+        [Parameter(Mandatory = $true)][String]$user,
+        [Parameter(Mandatory = $true)][String]$pass,
+        [Parameter(Mandatory = $true)][String]$wsaHostname,
+        [Parameter(Mandatory = $true)][String]$wsaIpAddress,
+        [Parameter(Mandatory = $true)][String]$wsaGateway,
+        [Parameter(Mandatory = $true)][String]$wsaSubnetMask,
+        [Parameter(Mandatory = $true)][String]$wsaOvaPath,
+        [Parameter(Mandatory = $true)][String]$wsaFolder
+    )
 
-            # Deploy Workspace ONE Access Virtual Appliance
-            Write-LogMessage -Message "Checking for pre-existing Workspace ONE Access virtual machine called $wsaHostname in vCenter Server $vCenterFqdn"
+    Try {
+        Request-VCFToken -fqdn $server -Username $user -Password $pass | Out-Null
+        if ($accessToken) {
             $wsaExists = Get-VM -Name $wsaHostname -ErrorAction SilentlyContinue
             if ($wsaExists) {
-                Write-LogMessage -Message "A virtual machine called $wsaHostname already exists in vCenter Server $vCenterFqdn" -Colour Magenta
+                Write-Warning "A virtual machine called $wsaHostname already exists in vCenter Server $vcServer"
             }
             else {
-                Write-LogMessage -Message "No virtual machine called $wsaHostname found in vCenter Server $vCenterFqdn. Proceeding with Deployment"  					
-                $command = '"C:\Program Files\VMware\VMware OVF Tool\ovftool.exe" --noSSLVerify --acceptAllEulas  --allowAllExtraConfig --diskMode=thin --powerOn --name=' + $wsaHostname + ' --ipProtocol="IPv4" --ipAllocationPolicy="fixedAllocatedPolicy" --vmFolder=' + $wsaFolderName + ' --net:"Network 1"=' + $regionaPortgroup + '  --datastore=' + $datastore + ' --X:injectOvfEnv --prop:vamitimezone=' + $timezone + '  --prop:vami.ip0.IdentityManager=' + $wsaIpAddress + ' --prop:vami.netmask0.IdentityManager=' + $wsaSubnetMask + ' --prop:vami.hostname=' + $wsaFqdn + ' --prop:vami.gateway.IdentityManager=' + $wsaGateway + ' --prop:vami.domain.IdentityManager=' + $domain + ' --prop:vami.searchpath.IdentityManager=' + $domain + ' --prop:vami.DNS.IdentityManager=' + $dnsServer1 + ',' + $dnsServer2 + ' ' + $wsaOvaPath + '  "vi://' + $vCenterAdminUser + ':' + $vCenterAdminPassword + '@' + $vcenterFqdn + '/' + $datacenter + '/host/' + $cluster + '/"'
-                $command | Out-File $logFile -Encoding ASCII -Append
-                Write-LogMessage -Message "This will take at least 10-15 minutes and maybe significantly longer depending on the environment. Please be patient" 
-                Invoke-Expression "& $command" | Out-File $logFile -Encoding ASCII -Append
+                $ntpServer = (Get-VCFConfigurationNTP).ipAddress
+                $dnsServer1 = (Get-VCFConfigurationDNS | Where-Object { $_.isPrimary -Match "True" }).ipAddress
+                $dnsServer2 = (Get-VCFConfigurationDNS | Where-Object { $_.isPrimary -Match "False" }).ipAddress
+                $cluster = (Get-VCFCluster | Where-Object { $_.id -eq ((Get-VCFWorkloadDomain | Where-Object { $_.type -eq "MANAGEMENT" }).clusters.id) }).Name
+                $datastore = (Get-VCFCluster | Where-Object { $_.id -eq ((Get-VCFWorkloadDomain | Where-Object { $_.type -eq "MANAGEMENT" }).clusters.id) }).primaryDatastoreName
+                $datacenter = (Get-Datacenter -Cluster $cluster).Name
+                $regionaPortgroup = (Get-VCFApplicationVirtualNetwork | Where-Object { $_.regionType -eq "REGION_A" }).name
+
+                $command = '"C:\Program Files\VMware\VMware OVF Tool\ovftool.exe" --noSSLVerify --acceptAllEulas  --allowAllExtraConfig --diskMode=thin --powerOn --name=' + $wsaHostname + ' --ipProtocol="IPv4" --ipAllocationPolicy="fixedAllocatedPolicy" --vmFolder=' + $wsaFolderName + ' --net:"Network 1"=' + $regionaPortgroup + '  --datastore=' + $datastore + ' --X:injectOvfEnv --prop:vamitimezone=' + $timezone + '  --prop:vami.ip0.IdentityManager=' + $wsaIpAddress + ' --prop:vami.netmask0.IdentityManager=' + $wsaSubnetMask + ' --prop:vami.hostname=' + $wsaFqdn + ' --prop:vami.gateway.IdentityManager=' + $wsaGateway + ' --prop:vami.domain.IdentityManager=' + $domain + ' --prop:vami.searchpath.IdentityManager=' + $domain + ' --prop:vami.DNS.IdentityManager=' + $dnsServer1 + ',' + $dnsServer2 + ' ' + $wsaOvaPath + '  "vi://' + $vcUser + ':' + $vcPassword + '@' + $vcServer + '/' + $datacenter + '/host/' + $cluster + '/"'
+                Invoke-Expression "& $command"
                 $wsaExists = Get-VM -Name $wsaHostname -ErrorAction SilentlyContinue
                 if ($wsaExists) {
                     $Timeout = 900  ## seconds
                     $CheckEvery = 15  ## seconds
                     Try {
                         $timer = [Diagnostics.Stopwatch]::StartNew()  ## Start the timer
-                        Write-LogMessage -Message "Checking the deployment status of Workspace ONE Access Virtual Machine $wsaHostname in vCenter Server $vCenterFqdn"
-                        Write-LogMessage -Message "Waiting for $wsaIpAddress to become pingable." -Colour Yellow
+                        Write-Output "Waiting for $wsaIpAddress to become pingable."
                         While (-not (Test-Connection -ComputerName $wsaIpAddress -Quiet -Count 1)) {
                             ## If the timer has waited greater than or equal to the timeout, throw an exception exiting the loop
                             if ($timer.Elapsed.TotalSeconds -ge $Timeout) {
@@ -386,7 +383,7 @@ Function Install-WorkspaceOne {
                         }
                     }
                     Catch {
-                        Write-LogMessage -Message "ERROR: Failed to get a Response from $wsaHostname" -Colour Red
+                        Write-Error "Failed to get a Response from $wsaHostname"
                     }
                     Finally {
                         $timer.Stop()  ## Stop the timer
@@ -395,7 +392,7 @@ Function Install-WorkspaceOne {
                         #Polling for Completed Deployment
                         $scriptSuccess = 'more /var/log/boot.msg | grep "' + "'hzn-dots start'" + ' exits with status 0"'
                         $scriptError = 'more /var/log/boot.msg | grep "' + "'hzn-dots start'" + ' exits with status 1"'
-                        Write-LogMessage -Message "Initial connection made, waiting for $wsaHostname to fully boot and services to start. Be warned, this takes a long time." -Colour Yellow
+                        Write-Output "Initial connection made, waiting for $wsaHostname to fully boot and services to start. Be warned, this takes a long time."
                         Do {
                             Start-Sleep 30
                             $ScriptSuccessOutput = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptSuccess -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue
@@ -405,10 +402,10 @@ Function Install-WorkspaceOne {
                             }
                         } Until($finished)
                         if ($ScriptSuccessOutput) {
-                            Write-LogMessage -Message "Deployment of $wsaHostname using $wsaOvaPath completed Successfully" -Colour Green
+                            Write-Output "Deployment of $wsaHostname using $wsaOvaPath completed Successfully"
                         }
                         elseif ($ScriptErrorOutput) {
-                            Write-LogMessage -Message "$wsaHostname failed to initialize properly. Please delete the VM from $vcenterFqdn and retry."
+                            Write-Error "$wsaHostname failed to initialize properly. Please delete the VM from $vcServer and retry"
                             Exit
                         }
                     }
@@ -417,13 +414,17 @@ Function Install-WorkspaceOne {
                     }
                 }
                 else {
-                    Write-LogMessage -Message "Workspace ONE Access Failed to deploy. Please check for errors in $logFile" -Colour Red    
+                    Write-Error "Workspace ONE Access Failed to deploy"
                 }
             }
         }
-        Catch {
-
+        else {
+            Write-Error "Failed to obtain access token from SDDC Manager, check details provided"
         }
+    }
+    Catch {
+        Debug-CatchWriter -object $_
+    }
 }
 Export-ModuleMember -Function Install-WorkspaceOne
 
@@ -552,51 +553,6 @@ Export-ModuleMember -Function Add-VMFolder
 
 
 ######### Start Shared Functions  ##########
-
-Function connectVsphere {
-    Param (
-        [Parameter(Mandatory = $true)][string]$hostname,
-        [Parameter(Mandatory = $true)][String]$user,
-        [Parameter(Mandatory = $true)][String]$password
-    )
-
-    Try {
-        Write-Output  "Connecting to vCenter/ESXi Server $hostname"
-        Connect-VIServer -Server $hostname -User $user -Password $password
-        Write-Output -Message "Connected to vCenter/ESXi Server $hostname Successfully"
-    }
-    Catch {
-        Debug-CatchWriter -object $_ 
-    }
-}
-
-Function disconnectVsphere ($hostname) {
-    Try {
-        Write-Output  "Disconnecting from vCenter/ESXi Server $hostname"
-        Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue
-        Write-Output  "Disconnected from vCenter/ESXi Server $hostname Successfully" -Colour Green
-    }
-    Catch {
-        Debug-CatchWriter -object $_ 
-    }
-}
-
-Function connectVcf ($fqdn, $username, $password) {
-    Write-Output  "Connecting to SDDC Manager $sddcMgrFqdn"
-    Try {
-        if (Test-Connection -ComputerName $fqdn -ErrorAction SilentlyContinue) {
-            Write-Output - "Checking that connection to SDDC Manager $fqdn is possible"
-            $connection = Request-VCFToken -fqdn $fqdn -username $username -password $password
-            if ($connection.success) { Write-Output "$($connection.success)" }
-        }
-        else {
-            if ($connection.error) { Write-Output "$($connection.error)" }
-        }
-    }
-    Catch {
-        Debug-CatchWriter -object $_ 
-    }
-}
 
 Function Test-ADAuthentication {
     Param (
@@ -734,7 +690,6 @@ Function Write-LogMessage {
     Add-Content -path $logFile $logContent
 }
 Export-ModuleMember -Function Write-LogMessage
-
 
 Function Debug-CatchWriter {
     Param (
