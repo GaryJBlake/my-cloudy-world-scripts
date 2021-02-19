@@ -357,7 +357,6 @@ Function Install-WorkspaceOne {
                 Write-Warning "A virtual machine called $wsaHostname already exists in vCenter Server $vcServer"
             }
             else {
-                $ntpServer = (Get-VCFConfigurationNTP).ipAddress
                 $dnsServer1 = (Get-VCFConfigurationDNS | Where-Object { $_.isPrimary -Match "True" }).ipAddress
                 $dnsServer2 = (Get-VCFConfigurationDNS | Where-Object { $_.isPrimary -Match "False" }).ipAddress
                 $cluster = (Get-VCFCluster | Where-Object { $_.id -eq ((Get-VCFWorkloadDomain | Where-Object { $_.type -eq "MANAGEMENT" }).clusters.id) }).Name
@@ -475,6 +474,46 @@ Function Initialize-WorkspaceOne {
     }
 }
 Export-ModuleMember -Function Initialize-WorkspaceOne
+
+Function Set-WorkspaceOneNtpConfig {
+    # Configure NTP Server on Workspace ONE Access Appliance
+    Param (
+        [Parameter(Mandatory = $true)][String]$vcServer,
+        [Parameter(Mandatory = $true)][String]$vcUser,
+        [Parameter(Mandatory = $true)][String]$vcPass,
+        [Parameter(Mandatory = $true)][String]$vcfFqdn,
+        [Parameter(Mandatory = $true)][String]$vcfUser,
+        [Parameter(Mandatory = $true)][String]$vcfPass,
+        [Parameter(Mandatory = $true)][String]$vmName,
+        [Parameter(Mandatory = $true)][String]$rootPass
+    )
+
+    Try {
+        Request-VCFToken -fqdn $vcfFqdn -Username $vcfUser -Password $vcfPass | Out-Null
+        $ntpServer = (Get-VCFConfigurationNTP).ipAddress
+        $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --get'
+        $output = Invoke-VMScript -VM $vmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass
+        if (($output.ScriptOutput).Contains($ntpServer)) {
+            Write-Warning -Message "NTP Server '$ntpServer' already configured on Workspace One Access Virtual Appliance $vmName"
+        }
+        else {
+            $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --set ' + $ntpServer
+            $output = Invoke-VMScript -VM $vmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass
+            $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --get'
+            $output = Invoke-VMScript -VM $vmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass
+            if (($output.ScriptOutput).Contains($ntpServer)) {
+                Write-Output "Configured NTP Server '$ntpServer' on Workspace One Access Virtual Appliance $vmName Successfully"
+            }
+            else {
+                Write-Error "Configuring NTP Server '$ntpServer' on Workspace One Access Virtual Appliance $vmName Failed"
+            }
+        }
+    }
+    Catch {
+        Debug-CatchWriter -object $_
+    }
+}
+Export-ModuleMember -Function Set-WorkspaceOneNtpConfig
 
 Function New-GlobalPermission {
     <#
@@ -654,33 +693,33 @@ Function Request-WSAToken {
 
     Param (
         [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [string]$fqdn,
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [string]$username,
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [string]$password
+        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [string]$user,
+        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [string]$pass
     )
 
-    If ( -not $PsBoundParameters.ContainsKey("username") -or ( -not $PsBoundParameters.ContainsKey("password"))) {
+    If ( -not $PsBoundParameters.ContainsKey("user") -or ( -not $PsBoundParameters.ContainsKey("pass"))) {
         # Request Credentials
         $creds = Get-Credential
-        $username = $creds.UserName.ToString()
-        $password = $creds.GetNetworkCredential().password
+        $user = $creds.UserName.ToString()
+        $pass = $creds.GetNetworkCredential().password
     }
     
     # Validate credentials by executing an API call
     $headers = @{"Content-Type" = "application/json"}
     $headers.Add("Accept", "application/json; charset=utf-8")
     $uri = "https://$fqdn/SAAS/API/1.0/REST/auth/system/login"
-    $body = '{"username": "' + $username + '", "password": "' + $password + '", "issueToken": "true"}'
+    $body = '{"username": "' + $user + '", "password": "' + $pass + '", "issueToken": "true"}'
     
     Try {
         # Checking against the API
         # PS Core has -SkipCertificateCheck implemented, PowerShell 5.x does not
         if ($PSEdition -eq 'Core') {
             $response = Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body -SkipCertificateCheck
-            $Global:accessToken = "HZN " + $response.sessionToken
+            $Global:sessionToken = "HZN " + $response.sessionToken
         }
         else {
             $response = Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body
-            $Global:accessToken = "HZN " + $response.sessionToken
+            $Global:sessionToken = "HZN " + $response.sessionToken
         }
         if ($response.sessionToken) {
             Write-Output "Successfully Requested New Session Token From Workspace ONE Access instance: $fqdn"
