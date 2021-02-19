@@ -109,90 +109,6 @@ Function Resolve-PSModule {
 
 ######### Start Identity and Access Management  ##########
 
-Function New-GlobalPermission {
-    <#
-    	.SYNOPSIS
-    	Script to add/remove vSphere Global Permission
-
-    	.DESCRIPTION
-    	The Connect-CloudBuilder cmdlet connects to the specified Cloud Builder and stores the credentials
-    	in a base64 string. It is required once per session before running all other cmdlets
-
-        .NOTES
-        Author:     William Lam. Modified by Ken Gould to permit principal type (user or group) and Gary Blake to include
-                    in this function
-        Reference:  http://www.virtuallyghetto.com/2017/02/automating-vsphere-global-permissions-with-powercli.html
-
-    	.EXAMPLE
-    	PS C:\> New-GlobalPermission -vcServer sfo-m01-vc01.sfo.rainpole.io -username administrator@vsphewre.local -vcPassword VMware1! -user svc-vc-admins
-    	This example shows how to add the Administrator global permission to a user called svc-vc-admins
-  	#>
-
-    Param (
-        [Parameter(Mandatory = $true)][string]$vcServer,
-        [Parameter(Mandatory = $true)][String]$vcUsername,
-        [Parameter(Mandatory = $true)][String]$vcPassword,
-        [Parameter(Mandatory = $true)][String]$user,
-        [Parameter(Mandatory = $true)][String]$roleId,
-        [Parameter(Mandatory = $true)][String]$propagate,
-        [Parameter(Mandatory = $true)][String]$type
-    )
-    
-    $secpasswd = ConvertTo-SecureString $vcPassword -AsPlainText -Force
-    $credential = New-Object System.Management.Automation.PSCredential($vcUsername, $secpasswd)
-    
-    $mob_url = "https://$vcServer/invsvc/mob3/?moid=authorizationService&method=AuthorizationService.AddGlobalAccessControlList" # vSphere MOB URL to private enableMethods
-    
-    # Ignore SSL Warnings
-    add-type -TypeDefinition  @"
-        using System.Net;
-        using System.Security.Cryptography.X509Certificates;
-        public class TrustAllCertsPolicy : ICertificatePolicy {
-            public bool CheckValidationResult(
-                ServicePoint srvPoint, X509Certificate certificate,
-                WebRequest request, int certificateProblem) {
-                return true;
-            }
-        }
-"@
-    [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
-    
-    $results = Invoke-WebRequest -Uri $mob_url -SessionVariable vmware -Credential $credential -Method GET # Initial login to vSphere MOB using GET and store session using $vmware variable
-    # Extract hidden vmware-session-nonce which must be included in future requests to prevent CSRF error
-    # Credit to https://blog.netnerds.net/2013/07/use-powershell-to-keep-a-cookiejar-and-post-to-a-web-form/ for parsing vmware-session-nonce via Powershell
-    if ($results.StatusCode -eq 200) {
-        $null = $results -match 'name="vmware-session-nonce" type="hidden" value="?([^\s^"]+)"'
-        $sessionnonce = $matches[1]
-    }
-    else {
-        Write-Error "Failed to login to vSphere MOB"
-        exit 1
-    }
-    
-    $vc_user_escaped = [uri]::EscapeUriString($user) # Escape username
-    
-    # The POST data payload must include the vmware-session-nonce variable + URL-encoded
-    If ($type -eq "group") {
-        $body = @"
-vmware-session-nonce=$sessionnonce&permissions=%3Cpermissions%3E%0D%0A+++%3Cprincipal%3E%0D%0A++++++%3Cname%3E$vc_user_escaped%3C%2Fname%3E%0D%0A++++++%3Cgroup%3Etrue%3C%2Fgroup%3E%0D%0A+++%3C%2Fprincipal%3E%0D%0A+++%3Croles%3E$roleId%3C%2Froles%3E%0D%0A+++%3Cpropagate%3E$propagate%3C%2Fpropagate%3E%0D%0A%3C%2Fpermissions%3E
-"@        
-    }
-    else {
-        $body = @"
-vmware-session-nonce=$sessionnonce&permissions=%3Cpermissions%3E%0D%0A+++%3Cprincipal%3E%0D%0A++++++%3Cname%3E$vc_user_escaped%3C%2Fname%3E%0D%0A++++++%3Cgroup%3Efalse%3C%2Fgroup%3E%0D%0A+++%3C%2Fprincipal%3E%0D%0A+++%3Croles%3E$roleId%3C%2Froles%3E%0D%0A+++%3Cpropagate%3E$propagate%3C%2Fpropagate%3E%0D%0A%3C%2Fpermissions%3E
-"@
-    }
-    
-    $results = Invoke-WebRequest -Uri $mob_url -WebSession $vmware -Method POST -Body $body # Second request using a POST and specifying our session from initial login + body request
-    if ($results.StatusCode -eq 200) {
-        Write-Verbose "Successfully added global permission for: $user"
-    }
-    $mob_logout_url = "https://$vcServer/invsvc/mob3/logout" # Logout out of vSphere MOB
-    $results = Invoke-WebRequest -Uri $mob_logout_url -WebSession $vmware -Method GET
-}
-Export-ModuleMember -Function New-GlobalPermission
-
-
 Function Add-IdentitySource {
     # Add Active Directory over LDAP as Identity Provider to vCenter Server and Set as Default
     Param (
@@ -333,7 +249,7 @@ Function Join-ESXiJoinDomain {
                 $currentDomainState = Get-VMHostAuthentication -VMHost $esxiHost
                 $currentDomain = [String]$currentDomainState.Domain
                 if ($currentDomain -ne $domain) {
-                    Get-VMHostAuthentication -VMHost $esxiHost | Set-VMHostAuthentication -Domain $domain -JoinDomain -Username $domainJoinUser -Password $domainJoinPassword -Confirm:$false
+                    Get-VMHostAuthentication -VMHost $esxiHost | Set-VMHostAuthentication -Domain $domain -JoinDomain -Username $domainJoinUser -Password $domainJoinPass -Confirm:$false
                     $currentDomainState = Get-VMHostAuthentication -VMHost $esxiHost
                     $currentDomain = [String]$currentDomainState.Domain
                     if ($currentDomain -eq $domain.ToUpper()) {
@@ -414,6 +330,222 @@ Function Add-ESXiDomainUser {
     }
 }
 Export-ModuleMember -Function Add-ESXiDomainUser
+
+Function Install-WorkspaceOne {
+    # Deploy and Configure Workspace ONE Access Virtual Appliance
+        Try {
+            # Create VM and Template Folder
+            Write-LogMessage -Message "Create VM and Template Folder and Deploy the Workspace One Access Virtual Appliance" -Colour Yellow
+            connectVsphere -hostname $vCenterFqdn -user $vCenterAdminUser -password $vCenterAdminPassword # Connect to vCenter Server
+            
+            Write-LogMessage -Message "Checking if VM and Template Folder '$wsaFolderName' already exists in vCenter Server $vCenterFqdn"
+            $folderExists = (Get-Folder -Name $wsaFolderName -ErrorAction SilentlyContinue)
+            if ($folderExists) {
+                Write-LogMessage -Message "The VM and Template Folder '$wsaFolderName' already exists in $vCenterFqdn" -colour Magenta
+            }
+            else {
+                Write-LogMessage -Message "Creating VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn"
+                $folder = (Get-View (Get-View -viewtype datacenter -filter @{"name" = [string]$datacenter }).vmfolder).CreateFolder($wsaFolderName)
+                Write-LogMessage -Message "Checking if VM and Template Folder '$wsaFolderName' was created correctly"
+                $folderExists = (Get-Folder -Name $wsaFolderName -ErrorAction SilentlyContinue)
+                if ($folderExists) {
+                    Write-LogMessage -Message  "Created VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn Successfully" -Colour Green
+                }
+                else {
+                    Write-LogMessage -Message "Creating VM and Template Folder '$wsaFolderName' in vCenter Server $vCenterFqdn Failed" -Colour Red
+                }
+            }
+
+            # Deploy Workspace ONE Access Virtual Appliance
+            Write-LogMessage -Message "Checking for pre-existing Workspace ONE Access virtual machine called $wsaHostname in vCenter Server $vCenterFqdn"
+            $wsaExists = Get-VM -Name $wsaHostname -ErrorAction SilentlyContinue
+            if ($wsaExists) {
+                Write-LogMessage -Message "A virtual machine called $wsaHostname already exists in vCenter Server $vCenterFqdn" -Colour Magenta
+            }
+            else {
+                Write-LogMessage -Message "No virtual machine called $wsaHostname found in vCenter Server $vCenterFqdn. Proceeding with Deployment"  					
+                $command = '"C:\Program Files\VMware\VMware OVF Tool\ovftool.exe" --noSSLVerify --acceptAllEulas  --allowAllExtraConfig --diskMode=thin --powerOn --name=' + $wsaHostname + ' --ipProtocol="IPv4" --ipAllocationPolicy="fixedAllocatedPolicy" --vmFolder=' + $wsaFolderName + ' --net:"Network 1"=' + $regionaPortgroup + '  --datastore=' + $datastore + ' --X:injectOvfEnv --prop:vamitimezone=' + $timezone + '  --prop:vami.ip0.IdentityManager=' + $wsaIpAddress + ' --prop:vami.netmask0.IdentityManager=' + $wsaSubnetMask + ' --prop:vami.hostname=' + $wsaFqdn + ' --prop:vami.gateway.IdentityManager=' + $wsaGateway + ' --prop:vami.domain.IdentityManager=' + $domain + ' --prop:vami.searchpath.IdentityManager=' + $domain + ' --prop:vami.DNS.IdentityManager=' + $dnsServer1 + ',' + $dnsServer2 + ' ' + $wsaOvaPath + '  "vi://' + $vCenterAdminUser + ':' + $vCenterAdminPassword + '@' + $vcenterFqdn + '/' + $datacenter + '/host/' + $cluster + '/"'
+                $command | Out-File $logFile -Encoding ASCII -Append
+                Write-LogMessage -Message "This will take at least 10-15 minutes and maybe significantly longer depending on the environment. Please be patient" 
+                Invoke-Expression "& $command" | Out-File $logFile -Encoding ASCII -Append
+                $wsaExists = Get-VM -Name $wsaHostname -ErrorAction SilentlyContinue
+                if ($wsaExists) {
+                    $Timeout = 900  ## seconds
+                    $CheckEvery = 15  ## seconds
+                    Try {
+                        $timer = [Diagnostics.Stopwatch]::StartNew()  ## Start the timer
+                        Write-LogMessage -Message "Checking the deployment status of Workspace ONE Access Virtual Machine $wsaHostname in vCenter Server $vCenterFqdn"
+                        Write-LogMessage -Message "Waiting for $wsaIpAddress to become pingable." -Colour Yellow
+                        While (-not (Test-Connection -ComputerName $wsaIpAddress -Quiet -Count 1)) {
+                            ## If the timer has waited greater than or equal to the timeout, throw an exception exiting the loop
+                            if ($timer.Elapsed.TotalSeconds -ge $Timeout) {
+                                Throw "Timeout Exceeded. Giving up on ping availability to $wsaIpAddress"
+                            }
+                            Start-Sleep -Seconds $CheckEvery  ## Stop the loop every $CheckEvery seconds
+                        }
+                    }
+                    Catch {
+                        Write-LogMessage -Message "ERROR: Failed to get a Response from $wsaHostname" -Colour Red
+                    }
+                    Finally {
+                        $timer.Stop()  ## Stop the timer
+                    }
+                    Try {
+                        #Polling for Completed Deployment
+                        $scriptSuccess = 'more /var/log/boot.msg | grep "' + "'hzn-dots start'" + ' exits with status 0"'
+                        $scriptError = 'more /var/log/boot.msg | grep "' + "'hzn-dots start'" + ' exits with status 1"'
+                        Write-LogMessage -Message "Initial connection made, waiting for $wsaHostname to fully boot and services to start. Be warned, this takes a long time." -Colour Yellow
+                        Do {
+                            Start-Sleep 30
+                            $ScriptSuccessOutput = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptSuccess -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue
+                            $ScriptErrorOutput = Invoke-VMScript -VM $wsaHostname -ScriptText $scriptError -GuestUser root -GuestPassword vmware -ErrorAction SilentlyContinue
+                            If (($ScriptSuccessOutput.ScriptOutput) -OR ($scriptError.ScriptOutput)) {
+                                $finished = $true
+                            }
+                        } Until($finished)
+                        if ($ScriptSuccessOutput) {
+                            Write-LogMessage -Message "Deployment of $wsaHostname using $wsaOvaPath completed Successfully" -Colour Green
+                        }
+                        elseif ($ScriptErrorOutput) {
+                            Write-LogMessage -Message "$wsaHostname failed to initialize properly. Please delete the VM from $vcenterFqdn and retry."
+                            Exit
+                        }
+                    }
+                    Catch {
+                        Debug-CatchWriter -object $_
+                    }
+                }
+                else {
+                    Write-LogMessage -Message "Workspace ONE Access Failed to deploy. Please check for errors in $logFile" -Colour Red    
+                }
+            }
+        }
+        Catch {
+
+        }
+}
+Export-ModuleMember -Function Install-WorkspaceOne
+
+Function New-GlobalPermission {
+    <#
+    	.SYNOPSIS
+    	Script to add/remove vSphere Global Permission
+
+    	.DESCRIPTION
+    	The Connect-CloudBuilder cmdlet connects to the specified Cloud Builder and stores the credentials
+    	in a base64 string. It is required once per session before running all other cmdlets
+
+        .NOTES
+        Author:     William Lam. Modified by Ken Gould to permit principal type (user or group) and Gary Blake to include
+                    in this function
+        Reference:  http://www.virtuallyghetto.com/2017/02/automating-vsphere-global-permissions-with-powercli.html
+
+    	.EXAMPLE
+    	PS C:\> New-GlobalPermission -vcServer sfo-m01-vc01.sfo.rainpole.io -username administrator@vsphewre.local -vcPassword VMware1! -user svc-vc-admins
+    	This example shows how to add the Administrator global permission to a user called svc-vc-admins
+  	#>
+
+    Param (
+        [Parameter(Mandatory = $true)][string]$vcServer,
+        [Parameter(Mandatory = $true)][String]$vcUsername,
+        [Parameter(Mandatory = $true)][String]$vcPassword,
+        [Parameter(Mandatory = $true)][String]$user,
+        [Parameter(Mandatory = $true)][String]$roleId,
+        [Parameter(Mandatory = $true)][String]$propagate,
+        [Parameter(Mandatory = $true)][String]$type
+    )
+    
+    $secpasswd = ConvertTo-SecureString $vcPassword -AsPlainText -Force
+    $credential = New-Object System.Management.Automation.PSCredential($vcUsername, $secpasswd)
+    
+    $mob_url = "https://$vcServer/invsvc/mob3/?moid=authorizationService&method=AuthorizationService.AddGlobalAccessControlList" # vSphere MOB URL to private enableMethods
+    
+    # Ignore SSL Warnings
+    add-type -TypeDefinition  @"
+        using System.Net;
+        using System.Security.Cryptography.X509Certificates;
+        public class TrustAllCertsPolicy : ICertificatePolicy {
+            public bool CheckValidationResult(
+                ServicePoint srvPoint, X509Certificate certificate,
+                WebRequest request, int certificateProblem) {
+                return true;
+            }
+        }
+"@
+    [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+    
+    $results = Invoke-WebRequest -Uri $mob_url -SessionVariable vmware -Credential $credential -Method GET # Initial login to vSphere MOB using GET and store session using $vmware variable
+    # Extract hidden vmware-session-nonce which must be included in future requests to prevent CSRF error
+    # Credit to https://blog.netnerds.net/2013/07/use-powershell-to-keep-a-cookiejar-and-post-to-a-web-form/ for parsing vmware-session-nonce via Powershell
+    if ($results.StatusCode -eq 200) {
+        $null = $results -match 'name="vmware-session-nonce" type="hidden" value="?([^\s^"]+)"'
+        $sessionnonce = $matches[1]
+    }
+    else {
+        Write-Error "Failed to login to vSphere MOB"
+        exit 1
+    }
+    
+    $vc_user_escaped = [uri]::EscapeUriString($user) # Escape username
+    
+    # The POST data payload must include the vmware-session-nonce variable + URL-encoded
+    If ($type -eq "group") {
+        $body = @"
+vmware-session-nonce=$sessionnonce&permissions=%3Cpermissions%3E%0D%0A+++%3Cprincipal%3E%0D%0A++++++%3Cname%3E$vc_user_escaped%3C%2Fname%3E%0D%0A++++++%3Cgroup%3Etrue%3C%2Fgroup%3E%0D%0A+++%3C%2Fprincipal%3E%0D%0A+++%3Croles%3E$roleId%3C%2Froles%3E%0D%0A+++%3Cpropagate%3E$propagate%3C%2Fpropagate%3E%0D%0A%3C%2Fpermissions%3E
+"@        
+    }
+    else {
+        $body = @"
+vmware-session-nonce=$sessionnonce&permissions=%3Cpermissions%3E%0D%0A+++%3Cprincipal%3E%0D%0A++++++%3Cname%3E$vc_user_escaped%3C%2Fname%3E%0D%0A++++++%3Cgroup%3Efalse%3C%2Fgroup%3E%0D%0A+++%3C%2Fprincipal%3E%0D%0A+++%3Croles%3E$roleId%3C%2Froles%3E%0D%0A+++%3Cpropagate%3E$propagate%3C%2Fpropagate%3E%0D%0A%3C%2Fpermissions%3E
+"@
+    }
+    
+    $results = Invoke-WebRequest -Uri $mob_url -WebSession $vmware -Method POST -Body $body # Second request using a POST and specifying our session from initial login + body request
+    if ($results.StatusCode -eq 200) {
+        Write-Verbose "Successfully added global permission for: $user"
+    }
+    $mob_logout_url = "https://$vcServer/invsvc/mob3/logout" # Logout out of vSphere MOB
+    $results = Invoke-WebRequest -Uri $mob_logout_url -WebSession $vmware -Method GET
+}
+Export-ModuleMember -Function New-GlobalPermission
+
+Function Add-VMFolder {
+    Param (
+        [Parameter(Mandatory = $true)][String]$server,
+        [Parameter(Mandatory = $true)][String]$user,
+        [Parameter(Mandatory = $true)][String]$pass,
+        [Parameter(Mandatory = $true)][string]$folderName
+    )
+
+    Try {
+        Request-VCFToken -fqdn $server -Username $user -Password $pass
+        if ($accessToken) {
+            $cluster = (Get-VCFCluster | Where-Object { $_.id -eq ((Get-VCFWorkloadDomain | Where-Object { $_.type -eq "MANAGEMENT" }).clusters.id) }).Name
+            $datacenter = (Get-Datacenter -Cluster $cluster).Name
+            $folderExists = (Get-Folder -Name $folderName -ErrorAction SilentlyContinue)
+            if ($folderExists) {
+                Write-Warning "The VM and Template Folder '$folderName' already exists"
+            }
+            else {
+                $folder = (Get-View (Get-View -viewtype datacenter -filter @{"name" = [string]$datacenter }).vmfolder).CreateFolder($folderName)
+                $folderExists = (Get-Folder -Name $folderName -ErrorAction SilentlyContinue)
+                if ($folderExists) {
+                    Write-Output  "Created VM and Template Folder '$folderName' in vCenter Server Successfully"
+                }
+                else {
+                    Write-Error "Creating VM and Template Folder '$folderName' in vCenter Server Failed"
+                }
+            }
+        }
+        else {
+            Write-Error "Failed to obtain access token from SDDC Manager, check details provided"
+        }
+    }
+    Catch {
+        Debug-CatchWriter -object $_
+    }
+}
+Export-ModuleMember -Function Add-VMFolder
 
 ######### End Identity and Access Management  ##########
 
