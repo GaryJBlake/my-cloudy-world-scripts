@@ -515,6 +515,34 @@ Function Set-WorkspaceOneNtpConfig {
 }
 Export-ModuleMember -Function Set-WorkspaceOneNtpConfig
 
+Function Install-WorkspaceOneCertificate {
+    # Install a Signed Certificate on Workspace ONE Access Appliance
+    Param (
+        [Parameter(Mandatory = $true)][String]$wsaFqdn,
+        [Parameter(Mandatory = $true)][String]$vmName,
+        [Parameter(Mandatory = $true)][String]$rootPass,
+        [Parameter(Mandatory = $true)][String]$sshUserPass,
+        [Parameter(Mandatory = $true)][String]$rootCa,
+        [Parameter(Mandatory = $true)][String]$wsaCertKey,
+        [Parameter(Mandatory = $true)][String]$wsaCert
+    )
+
+    Try {    
+        $SecurePassword = ConvertTo-SecureString -String $sshUserPass -AsPlainText -Force
+        $secureCreds = New-Object System.Management.Automation.PSCredential ("sshuser", $SecurePassword)
+        Set-SCPFile -ComputerName $wsaFqdn -Credential $secureCreds -RemotePath '/tmp' -LocalFile $rootCa -NoProgress -AcceptKey $true -Force -WarningAction SilentlyContinue
+        Set-SCPFile -ComputerName $wsaFqdn -Credential $secureCreds -RemotePath '/tmp' -LocalFile $wsaCertKey -NoProgress -AcceptKey $true -Force -WarningAction SilentlyContinue
+        Set-SCPFile -ComputerName $wsaFqdn -Credential $secureCreds -RemotePath '/tmp' -LocalFile $wsaCert -NoProgress -AcceptKey $true -Force -WarningAction SilentlyContinue
+        $scriptCommand = 'echo "yes" | /usr/local/horizon/scripts/installExternalCertificate.hzn --ca /tmp/' + $rootCa + ' --cert /tmp/' + $wsaCert + ' --key /tmp/' + $wsaCertKey
+        $output = Invoke-VMScript -VM $vmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass
+        Write-Output "Installed Signed Certifcate $wsaCert on Workspace One Access Virtual Appliance $wsaFqdn Successfully"       
+    }
+    Catch {
+        Debug-CatchWriter -object $_
+    }
+}
+Export-ModuleMember -Function Install-WorkspaceOneCertificate
+
 Function New-GlobalPermission {
     <#
     	.SYNOPSIS
