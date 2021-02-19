@@ -205,7 +205,7 @@ Function Add-SddcManagerRole {
     $domainCreds = New-Object System.Management.Automation.PSCredential ($domainBindUser, $securePass)
 
     Try {
-        Request-VCFToken -fqdn $server -Username $user -Password $pass
+        Request-VCFToken -fqdn $server -Username $user -Password $pass | Out-Null
         if (Get-ADGroup -Server $domain -Credential $domainCreds -Filter { SamAccountName -eq $group }) {
             $groupCheck = Get-VCFUser | Where-Object { $_.name -eq $($domain.ToUpper() + "\" + $group) }
             if ($groupCheck.name -eq $($domain.ToUpper() + "\" + $group)) {
@@ -287,15 +287,16 @@ Function Add-ESXiDomainUser {
         [Parameter(Mandatory = $true)][String]$domainBindPass,
         [Parameter(Mandatory = $true)][String]$principal,
         [Parameter(Mandatory = $true)][String]$role,
-        [Parameter(Mandatory = $true)][ValidateSet("true","false")][String]$propagate
+        [Parameter(Mandatory = $true)][bool]$propagate
     )
 
     $securePass = ConvertTo-SecureString -String $domainBindPass -AsPlainText -Force
     $domainCreds = New-Object System.Management.Automation.PSCredential ($domainBindUser, $securePass)
+    $addPrincipal = ($domain.Split(".")[0]).ToUpper() + "\" + $principal 
 
     # Assign an Active Directory Group to each ESXi Host for Administration
     Try {
-        Connect-VIServer -Server $vcServer -User $vcUser -Pass $vcPass # Connect to vCenter Server
+        Connect-VIServer -Server $vcServer -User $vcUser -Pass $vcPass | Out-Null # Connect to vCenter Server
         $esxiHosts = Get-VMHost
         Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue # Disconnect from vCenter Server
 
@@ -303,18 +304,18 @@ Function Add-ESXiDomainUser {
             $count = 0
             Foreach ($esxiHost in $esxiHosts) {
                 Connect-VIServer -Server $esxiHost -User $esxiUser -Pass $esxiPass # Connect to ESXi Server
-                $checkPermission = Get-VIPermission | Where-Object { $_.Principal -eq $principal }
-                if ($checkPermission.Principal -eq $principal) {
-                    Write-Warning "Active Directory Group '$principal' already assigned permissions to $esxiHost"
+                $checkPermission = Get-VIPermission | Where-Object { $_.Principal -eq $addPrincipal }
+                if ($checkPermission.Principal -eq $addPrincipal) {
+                    Write-Warning "Active Directory Group '$addPrincipal' already assigned permissions to $esxiHost"
                 }
                 else {
-                    New-VIPermission -Entity (Get-VMHost) -Principal $principal -Propagate $propagate -Role $role
-                    $checkPermission = Get-VIPermission | Where-Object { $_.Principal -eq $principal }
-                    if ($checkPermission.Principal -eq $principal) {
-                        Write-Output "Active Directory Group '$principal' assigned the Administrator role to $esxiHost Successfully"
+                    New-VIPermission -Entity (Get-VMHost) -Principal $addPrincipal -Propagate $propagate -Role $role
+                    $checkPermission = Get-VIPermission | Where-Object { $_.Principal -eq $addPrincipal }
+                    if ($checkPermission.Principal -eq $addPrincipal) {
+                        Write-Output "Active Directory Group '$addPrincipal' assigned the Administrator role to $esxiHost Successfully"
                     }
                     else {
-                        Write-Error "Assigning Active Directory Group '$principal' the Administrator role to $esxiHost Failed"
+                        Write-Error "Assigning Active Directory Group '$addPrincipal' the Administrator role to $esxiHost Failed"
                     }
                 }
                 Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue # Disconnect from ESXi Server
@@ -322,7 +323,7 @@ Function Add-ESXiDomainUser {
             }
         }
         else {
-            Write-Error "Active Directory User/Group '$principal' not found in the Active Directory Domain, please create and retry"
+            Write-Error "Active Directory User/Group '$addPrincipal' not found in the Active Directory Domain, please create and retry"
         }
     }
     Catch {
@@ -518,7 +519,7 @@ Function Add-VMFolder {
     )
 
     Try {
-        Request-VCFToken -fqdn $server -Username $user -Password $pass
+        Request-VCFToken -fqdn $server -Username $user -Password $pass | Out-Null
         if ($accessToken) {
             $cluster = (Get-VCFCluster | Where-Object { $_.id -eq ((Get-VCFWorkloadDomain | Where-Object { $_.type -eq "MANAGEMENT" }).clusters.id) }).Name
             $datacenter = (Get-Datacenter -Cluster $cluster).Name
