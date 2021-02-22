@@ -112,8 +112,9 @@ Function Resolve-PSModule {
 Function Add-IdentitySource {
     # Add Active Directory over LDAP as Identity Provider to vCenter Server and Set as Default
     Param (
-        [Parameter(Mandatory = $true)][String]$vCenterVmName,
-        [Parameter(Mandatory = $true)][String]$rootPass,
+        [Parameter(Mandatory = $true)][String]$server,
+        [Parameter(Mandatory = $true)][String]$user,
+        [Parameter(Mandatory = $true)][String]$pass,
         [Parameter(Mandatory = $true)][String]$domain,
         [Parameter(Mandatory = $true)][String]$domainBindUser,
         [Parameter(Mandatory = $true)][String]$domainBindPass,
@@ -127,25 +128,33 @@ Function Add-IdentitySource {
     $primaryUrl = 'ldap://' + $dcMachineName + '.' + $domain + ':389'
 
     Try {
-        $scriptCommand = '/opt/vmware/bin/sso-config.sh -get_identity_sources'
-        $output = Invoke-VMScript -VM $vCenterVmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass -ErrorAction SilentlyContinue
-        if (($output.ScriptOutput).Contains($domain)) {
-            Write-Warning "Identity Source $domain already added to vCenter Server $vCenterVmName"
-        }
-        else {
-            $scriptCommand = '/opt/vmware/bin/sso-config.sh -add_identity_source -type adldap -baseUserDN ' + $baseUserDn + ' -baseGroupDN ' + $baseGroupDn + ' -domain ' + $domain + ' -alias ' + $domainAlias + ' -username ' + $bindUser + ' -password ' + $domainBindPass + ' -primaryURL ' + $primaryUrl + ''
-            $output = Invoke-VMScript -VM $vCenterVmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass
+        $vcenter = Get-vCenterServerDetails -server $server -user $user -pass $pass -domainType MANAGEMENT
+        Connect-VIServer -Server $vcenter.fqdn -User $vcenter.ssoAdmin -pass $vcenter.ssoAdminPass | Out-Null
+        if ($DefaultVIServer.Name -eq $($vcenter.fqdn)) {
             $scriptCommand = '/opt/vmware/bin/sso-config.sh -get_identity_sources'
-            $output = Invoke-VMScript -VM $vCenterVmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass -ErrorAction SilentlyContinue
+            $output = Invoke-VMScript -VM $vcenter.vmName -ScriptText $scriptCommand -GuestUser $vcenter.root -GuestPassword $vcenter.rootPass -ErrorAction SilentlyContinue
             if (($output.ScriptOutput).Contains($domain)) {
-                Write-Output "Confirmed adding Identity Source $domain to vCenter Server $vCenterVmName Successfully"
+                Write-Warning "Identity Source $domain already added to vCenter Server $($vcenter.vmName)"
             }
             else {
-                Write-Error  "Adding Identity Source $domain to vCenter Server $vCenterVmName Failed"
+                $scriptCommand = '/opt/vmware/bin/sso-config.sh -add_identity_source -type adldap -baseUserDN ' + $baseUserDn + ' -baseGroupDN ' + $baseGroupDn + ' -domain ' + $domain + ' -alias ' + $domainAlias + ' -username ' + $bindUser + ' -password ' + $domainBindPass + ' -primaryURL ' + $primaryUrl + ''
+                $output = Invoke-VMScript -VM $vcenter.vmName -ScriptText $scriptCommand -GuestUser $vcenter.root -GuestPassword $vcenter.rootPass
+                $scriptCommand = '/opt/vmware/bin/sso-config.sh -get_identity_sources'
+                $output = Invoke-VMScript -VM $vcenter.vmName -ScriptText $scriptCommand -GuestUser $vcenter.root -GuestPassword $vcenter.rootPass -ErrorAction SilentlyContinue
+                if (($output.ScriptOutput).Contains($domain)) {
+                    Write-Output "Confirmed adding Identity Source $domain to vCenter Server $($vcenter.vmName) Successfully"
+                }
+                else {
+                    Write-Error  "Adding Identity Source $domain to vCenter Server $($vcenter.vmName) Failed"
+                }
+                $scriptCommand = '/opt/vmware/bin/sso-config.sh -set_default_identity_sources -i ' + $domain + ''
+                $output = Invoke-VMScript -VM $vcenter.vmName -ScriptText $scriptCommand -GuestUser $vcenter.root -GuestPassword $vcenter.rootPass
+                Write-Output  "Confirmed setting $domain as Default Identity Source on vCenter Server $($vcenter.vmName) Successfully"
+                Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue
             }
-            $scriptCommand = '/opt/vmware/bin/sso-config.sh -set_default_identity_sources -i ' + $domain + ''
-            $output = Invoke-VMScript -VM $vCenterVmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass
-            Write-Output  "Confirmed setting $domain as Default Identity Source on vCenter Server $vCenterVmName Successfully"
+        }
+        else {
+            Write-Error  "Not connected to vCenter Server $($vcenter.fqdn)"
         }
     }
     Catch {
@@ -232,7 +241,7 @@ Function Add-SddcManagerRole {
 }
 Export-ModuleMember -Function Add-SddcManagerRole
 
-Function Join-ESXiJoinDomain {
+Function Join-ESXiActiveDirectory {
     # Join each ESXi Host to the Active Directory Domain
     Param (
         [Parameter(Mandatory = $true)][String]$domain,
@@ -273,7 +282,7 @@ Function Join-ESXiJoinDomain {
         Debug-CatchWriter -object $_
     }
 }
-Export-ModuleMember -Function Join-ESXiJoinDomain
+Export-ModuleMember -Function Join-ESXiActiveDirectory
 
 Function Add-ESXiDomainUser {
     Param (
@@ -332,7 +341,7 @@ Function Add-ESXiDomainUser {
 }
 Export-ModuleMember -Function Add-ESXiDomainUser
 
-Function Install-WorkspaceOne {
+Function Install-WorkspaceOne { 
     # Deploy Workspace ONE Access Virtual Appliance
     Param (
         [Parameter(Mandatory = $true)][String]$vcServer,
@@ -664,6 +673,7 @@ Function Add-VMFolder {
 }
 Export-ModuleMember -Function Add-VMFolder
 
+
 ######### End Identity and Access Management  ##########
 
 
@@ -676,30 +686,88 @@ Function Test-ADAuthentication {
         [Parameter(Mandatory = $false)]$server,
         [Parameter(Mandatory = $false)][string]$domain = $env:USERDOMAIN
     )
-      
-    Add-Type -AssemblyName System.DirectoryServices.AccountManagement
-        
-    $contextType = [System.DirectoryServices.AccountManagement.ContextType]::Domain
-        
-    $argumentList = New-Object -TypeName "System.Collections.ArrayList"
-    $null = $argumentList.Add($contextType)
-    $null = $argumentList.Add($domain)
-    if($null -ne $server){
-        $argumentList.Add($server)
+
+    Try {
+        Add-Type -AssemblyName System.DirectoryServices.AccountManagement  
+        $contextType = [System.DirectoryServices.AccountManagement.ContextType]::Domain  
+        $argumentList = New-Object -TypeName "System.Collections.ArrayList"
+        $null = $argumentList.Add($contextType)
+        $null = $argumentList.Add($domain)
+        if($null -ne $server){
+            $argumentList.Add($server)
+        }
+        $principalContext = New-Object System.DirectoryServices.AccountManagement.PrincipalContext -ArgumentList $argumentList -ErrorAction SilentlyContinue
+        if ($null -eq $principalContext) {
+            Write-Error "$domain\$user - AD Authentication Failed"
+        }
+        if ($principalContext.ValidateCredentials($user, $pass)) {
+            Write-Output "$domain\$user - AD Authentication Successful"
+        }
+        else {
+            Write-Error "$domain\$eser - AD Authentication Failed"
+        }
     }
-    $principalContext = New-Object System.DirectoryServices.AccountManagement.PrincipalContext -ArgumentList $argumentList -ErrorAction SilentlyContinue
-    if ($null -eq $principalContext) {
-        Write-Error "$domain\$user - AD Authentication Failed"
-    }
-    if ($principalContext.ValidateCredentials($user, $pass)) {
-        Write-Output "$domain\$user - AD Authentication Successful"
-    }
-    else {
-        Write-Error "$domain\$eser - AD Authentication Failed"
+    Catch {
+        Debug-CatchWriter -object $_
     }
 }
 Export-ModuleMember -Function Test-ADAuthentication
 
+
+Function Get-vCenterServerDetails {
+    Param (
+        [Parameter(Mandatory=$true)][string]$server,
+        [Parameter(Mandatory=$true)][string]$user,
+        [Parameter(Mandatory=$true)][string]$pass,
+        [Parameter(Mandatory=$false)][ValidateSet("MANAGEMENT","VI")][string]$domainType,
+        [Parameter(Mandatory=$false)][string]$domain
+    )
+
+    Try {
+    Request-VCFToken -fqdn $server -Username $user -Password $pass | Out-Null
+        if ($accessToken) {
+            if ($PsBoundParameters.ContainsKey("domainType")) {
+                # Dynamically build vCenter Server details based on Cloud Foundation domain type
+                $vcfWorkloadDomainDetails = Get-VCFWorkloadDomain | Where-Object {$_.type -eq $domainType}
+                $vcenterServerDetails = Get-VCFvCenter | Where-Object {$_.id -eq $($vcfWorkloadDomainDetails.vcenters.id)}
+            }
+            if ($PsBoundParameters.ContainsKey("domain")) {
+                # Dynamically build vCenter Server details based on Cloud Foundation domain type
+                $vcfWorkloadDomainDetails = Get-VCFWorkloadDomain | Where-Object {$_.name -eq $domain}
+                $vcenterServerDetails = Get-VCFvCenter | Where-Object {$_.id -eq $($vcfWorkloadDomainDetails.vcenters.id)}
+            }
+            if ($vcfWorkloadDomainDetails) {
+                $vcenterCredentialDetails = Get-VCFCredential | Where-Object {$_.resource.resourceId -eq $($vcenterServerDetails.id)}
+                $pscCredentialDetails = Get-VCFCredential | Where-Object {$_.resource.resourceType -eq "PSC"}
+                $vcenterServer = New-Object -TypeName psobject
+                $vcenterServer | Add-Member -notepropertyname 'fqdn' -notepropertyvalue $vcenterServerDetails.fqdn
+                $vcenterServer | Add-Member -notepropertyname 'vmName' -notepropertyvalue $vcenterServerDetails.fqdn.Split(".")[0]
+                $vcfDetail = Get-VCFManager
+                if ( ($vcfDetail.version).Split("-")[0] -gt "4.1.0.0") {
+                    $vcenterServer | Add-Member -notepropertyname 'ssoAdmin' -notepropertyvalue ($pscCredentialDetails | Where-Object {($_.credentialType -eq "SSO" -and $_.accountType -eq "SYSTEM")}).username
+                    $vcenterServer | Add-Member -notepropertyname 'ssoAdminPass' -notepropertyvalue ($pscCredentialDetails | Where-Object {($_.credentialType -eq "SSO" -and $_.accountType -eq "SYSTEM")}).password
+                }
+                else {
+                    $vcenterServer | Add-Member -notepropertyname 'ssoAdmin' -notepropertyvalue ($pscCredentialDetails | Where-Object {($_.credentialType -eq "SSO" -and $_.accountType -eq "USER")}).username
+                    $vcenterServer | Add-Member -notepropertyname 'ssoAdminPass' -notepropertyvalue ($pscCredentialDetails | Where-Object {($_.credentialType -eq "SSO" -and $_.accountType -eq "USER")}).password
+                }
+                $vcenterServer | Add-Member -notepropertyname 'root' -notepropertyvalue ($vcenterCredentialDetails | Where-Object {($_.credentialType -eq "SSH" -and $_.accountType -eq "USER")}).username
+                $vcenterServer | Add-Member -notepropertyname 'rootPass' -notepropertyvalue ($vcenterCredentialDetails | Where-Object {($_.credentialType -eq "SSH" -and $_.accountType -eq "USER")}).password
+                $vcenterServer
+            }
+            else {
+                Write-Error "Workload domainType or domain name does not exist"
+            }
+        }
+        else {
+            Write-Error "Failed to obtain access token from SDDC Manager, check details provided"
+        }
+    }
+    Catch {
+        Debug-CatchWriter -object $_
+    }
+}
+Export-ModuleMember -Function Get-vCenterServerDetails
 
 ######### Start Shared Functions  ##########
 
