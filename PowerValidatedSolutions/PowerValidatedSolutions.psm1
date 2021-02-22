@@ -150,9 +150,9 @@ Function Add-IdentitySource {
                 $scriptCommand = '/opt/vmware/bin/sso-config.sh -set_default_identity_sources -i ' + $domain + ''
                 $output = Invoke-VMScript -VM $vcenter.vmName -ScriptText $scriptCommand -GuestUser $vcenter.root -GuestPassword $vcenter.rootPass
                 Write-Output  "Confirmed setting $domain as Default Identity Source on vCenter Server $($vcenter.vmName) Successfully"
-                Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue
             }
         }
+        Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue
         else {
             Write-Error  "Not connected to vCenter Server $($vcenter.fqdn)"
         }
@@ -182,14 +182,22 @@ Function Add-GlobalPermission {
     $domainCreds = New-Object System.Management.Automation.PSCredential ($domainBindUser, $securePass)
 
     Try {
-        if (Get-ADGroup -Server $domain -Credential $domainCreds -Filter { SamAccountName -eq $principal }) {
-            $roleId = (Get-VIRole -Name $role | Select-Object -ExpandProperty Id)
-            New-GlobalPermission -vcServer $server -vcUsername $user -vcPassword $pass -roleId $roleId -user $principal -propagate $propagate -type $type
-            Write-Output "Assigned Global Permission Role $role to '$principal' in vCenter Server $server Successfully"
+        $vcenter = Get-vCenterServerDetails -server $server -user $user -pass $pass -domainType MANAGEMENT
+        Connect-VIServer -Server $vcenter.fqdn -User $vcenter.ssoAdmin -pass $vcenter.ssoAdminPass | Out-Null
+        if ($DefaultVIServer.Name -eq $($vcenter.fqdn)) {
+            if (Get-ADGroup -Server $domain -Credential $domainCreds -Filter { SamAccountName -eq $principal }) {
+                $roleId = (Get-VIRole -Name $role | Select-Object -ExpandProperty Id)
+                New-GlobalPermission -vcServer $vcenter.fqdn -vcUsername $vcenter.ssoAdmin -vcPassword $vcenter.ssoAdminPass -roleId $roleId -user $principal -propagate $propagate -type $type
+                Write-Output "Assigned Global Permission Role $role to '$principal' in vCenter Server $($vcenter.fqdn) Successfully"
+            }
+            else {
+                Write-Error "Active Directory Group '$principal' not found in the Active Directory Domain, please create and retry"
+            }
         }
         else {
-            Write-Error "Active Directory Group '$principal' not found in the Active Directory Domain, please create and retry"
+            Write-Error  "Not connected to vCenter Server $($vcenter.fqdn)"
         }
+        Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue
     }
     Catch {
         Debug-CatchWriter -object $_
@@ -244,38 +252,49 @@ Export-ModuleMember -Function Add-SddcManagerRole
 Function Join-ESXiActiveDirectory {
     # Join each ESXi Host to the Active Directory Domain
     Param (
+        [Parameter(Mandatory = $true)][String]$server,
+        [Parameter(Mandatory = $true)][String]$user,
+        [Parameter(Mandatory = $true)][String]$pass,
         [Parameter(Mandatory = $true)][String]$domain,
         [Parameter(Mandatory = $true)][String]$domainJoinUser,
-        [Parameter(Mandatory = $true)][String]$domainJoinPass
+        [Parameter(Mandatory = $true)][String]$domainJoinPass,
+        [Parameter(Mandatory = $true)][String]$vcfDomain
     )
 
     Try {
-        $checkAdAuthentication = Test-ADAuthentication -user $domainJoinUser -pass $domainJoinPass -server $domain -domain $domain
-        if ($checkAdAuthentication -contains "2") {
-            $esxiHosts = Get-VMHost
-            $count = 0
-            Foreach ($esxiHost in $esxiHosts) {
-                $currentDomainState = Get-VMHostAuthentication -VMHost $esxiHost
-                $currentDomain = [String]$currentDomainState.Domain
-                if ($currentDomain -ne $domain) {
-                    Get-VMHostAuthentication -VMHost $esxiHost | Set-VMHostAuthentication -Domain $domain -JoinDomain -Username $domainJoinUser -Password $domainJoinPass -Confirm:$false
+        $vcenter = Get-vCenterServerDetails -server $server -user $user -pass $pass -domain $vcfDomain
+        Connect-VIServer -Server $vcenter.fqdn -User $vcenter.ssoAdmin -pass $vcenter.ssoAdminPass | Out-Null
+        if ($DefaultVIServer.Name -eq $($vcenter.fqdn)) {
+            $checkAdAuthentication = Test-ADAuthentication -user $domainJoinUser -pass $domainJoinPass -server $domain -domain $domain
+            if ($checkAdAuthentication -contains "2") {
+                $esxiHosts = Get-VMHost
+                $count = 0
+                Foreach ($esxiHost in $esxiHosts) {
                     $currentDomainState = Get-VMHostAuthentication -VMHost $esxiHost
                     $currentDomain = [String]$currentDomainState.Domain
-                    if ($currentDomain -eq $domain.ToUpper()) {
-                        Write-Output "Confirmed ESXi Host $esxiHost joined Active Directory Domain $domain Successfully"
+                    if ($currentDomain -ne $domain) {
+                        Get-VMHostAuthentication -VMHost $esxiHost | Set-VMHostAuthentication -Domain $domain -JoinDomain -Username $domainJoinUser -Password $domainJoinPass -Confirm:$false
+                        $currentDomainState = Get-VMHostAuthentication -VMHost $esxiHost
+                        $currentDomain = [String]$currentDomainState.Domain
+                        if ($currentDomain -eq $domain.ToUpper()) {
+                            Write-Output "Confirmed ESXi Host $esxiHost joined Active Directory Domain $domain Successfully"
+                        }
+                        else {
+                            Write-Error "Adding ESXi Host $esxiHost to Active Directory Domain $domain Failed"
+                        }
                     }
                     else {
-                        Write-Error "Adding ESXi Host $esxiHost to Active Directory Domain $domain Failed"
+                        Write-Warning "ESXi Host $esxiHost already joined to Active Directory Domain $domain"
                     }
+                    $count = $count + 1
                 }
-                else {
-                    Write-Warning "ESXi Host $esxiHost already joined to Active Directory Domain $domain"
-                }
-                $count = $count + 1
+            }
+            else {
+                Write-Error "Domain User $domainJoinUser Authentication Failed"
             }
         }
         else {
-            Write-Error "Domain User $domainJoinUser Authentication Failed"
+            Write-Error  "Not connected to vCenter Server $($vcenter.fqdn)"
         }
     }
     Catch {
