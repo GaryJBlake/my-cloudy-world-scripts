@@ -223,24 +223,29 @@ Function Add-SddcManagerRole {
 
     Try {
         Request-VCFToken -fqdn $server -Username $user -Password $pass | Out-Null
-        if (Get-ADGroup -Server $domain -Credential $domainCreds -Filter { SamAccountName -eq $group }) {
-            $groupCheck = Get-VCFUser | Where-Object { $_.name -eq $($domain.ToUpper() + "\" + $group) }
-            if ($groupCheck.name -eq $($domain.ToUpper() + "\" + $group)) {
-                Write-Warning -Message "Active Directory Group '$group' already assigned the $role role in SDDC Manager"
-            }
-            else {
-                New-VCFGroup -group $group -domain $domain -role $role
+        if ($accessToken) {
+            if (Get-ADGroup -Server $domain -Credential $domainCreds -Filter { SamAccountName -eq $group }) {
                 $groupCheck = Get-VCFUser | Where-Object { $_.name -eq $($domain.ToUpper() + "\" + $group) }
                 if ($groupCheck.name -eq $($domain.ToUpper() + "\" + $group)) {
-                    Write-Output "Active Directory Group '$group' assigned the $role role in SDDC Manager Successfully"
+                    Write-Warning -Message "Active Directory Group '$group' already assigned the $role role in SDDC Manager"
                 }
                 else {
-                    Write-Error "Assigning Active Directory Group '$group' the $role role in SDDC Manager Failed"
+                    New-VCFGroup -group $group -domain $domain -role $role
+                    $groupCheck = Get-VCFUser | Where-Object { $_.name -eq $($domain.ToUpper() + "\" + $group) }
+                    if ($groupCheck.name -eq $($domain.ToUpper() + "\" + $group)) {
+                        Write-Output "Active Directory Group '$group' assigned the $role role in SDDC Manager Successfully"
+                    }
+                    else {
+                        Write-Error "Assigning Active Directory Group '$group' the $role role in SDDC Manager Failed"
+                    }
                 }
+            }
+            else {
+                Write-Error "Active Directory Group '$group' not found in the Active Directory Domain, please create and retry"
             }
         }
         else {
-            Write-Error "Active Directory Group '$group' not found in the Active Directory Domain, please create and retry"
+            Write-Error "Failed to obtain access token from SDDC Manager, check details provided" 
         }
     }
     Catch {
