@@ -519,35 +519,40 @@ Export-ModuleMember -Function Initialize-WorkspaceOne
 Function Set-WorkspaceOneNtpConfig {
     # Configure NTP Server on Workspace ONE Access Appliance
     Param (
-        [Parameter(Mandatory = $true)][String]$vcServer,
-        [Parameter(Mandatory = $true)][String]$vcUser,
-        [Parameter(Mandatory = $true)][String]$vcPass,
-        [Parameter(Mandatory = $true)][String]$vcfFqdn,
-        [Parameter(Mandatory = $true)][String]$vcfUser,
-        [Parameter(Mandatory = $true)][String]$vcfPass,
-        [Parameter(Mandatory = $true)][String]$vmName,
+        [Parameter(Mandatory = $true)][String]$server,
+        [Parameter(Mandatory = $true)][String]$user,
+        [Parameter(Mandatory = $true)][String]$pass,
+        [Parameter(Mandatory = $true)][String]$wsaFqdn,
         [Parameter(Mandatory = $true)][String]$rootPass
     )
 
     Try {
-        Request-VCFToken -fqdn $vcfFqdn -Username $vcfUser -Password $vcfPass | Out-Null
-        $ntpServer = (Get-VCFConfigurationNTP).ipAddress
-        $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --get'
-        $output = Invoke-VMScript -VM $vmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass
-        if (($output.ScriptOutput).Contains($ntpServer)) {
-            Write-Warning -Message "NTP Server '$ntpServer' already configured on Workspace One Access Virtual Appliance $vmName"
-        }
-        else {
-            $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --set ' + $ntpServer
-            $output = Invoke-VMScript -VM $vmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass
+        $vcenter = Get-vCenterServerDetails -server $server -user $user -pass $pass -domainType MANAGEMENT
+        Connect-VIServer -Server $vcenter.fqdn -User $vcenter.ssoAdmin -pass $vcenter.ssoAdminPass | Out-Null
+        if ($DefaultVIServer.Name -eq $($vcenter.fqdn)) {
+            $ntpServer = (Get-VCFConfigurationNTP).ipAddress
+            $vmName = $wsaFqdn.Split(".")[0]
             $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --get'
             $output = Invoke-VMScript -VM $vmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass
             if (($output.ScriptOutput).Contains($ntpServer)) {
-                Write-Output "Configured NTP Server '$ntpServer' on Workspace One Access Virtual Appliance $vmName Successfully"
+                Write-Warning -Message "NTP Server '$ntpServer' already configured on Workspace One Access Virtual Appliance $vmName"
             }
             else {
-                Write-Error "Configuring NTP Server '$ntpServer' on Workspace One Access Virtual Appliance $vmName Failed"
+                $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --set ' + $ntpServer
+                $output = Invoke-VMScript -VM $vmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass
+                $scriptCommand = '/usr/local/horizon/scripts/ntpServer.hzn --get'
+                $output = Invoke-VMScript -VM $vmName -ScriptText $scriptCommand -GuestUser root -GuestPassword $rootPass
+                if (($output.ScriptOutput).Contains($ntpServer)) {
+                    Write-Output "Configured NTP Server '$ntpServer' on Workspace One Access Virtual Appliance $vmName Successfully"
+                }
+                else {
+                    Write-Error "Configuring NTP Server '$ntpServer' on Workspace One Access Virtual Appliance $vmName Failed"
+                }
             }
+            Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue
+        }
+        else {
+            Write-Error  "Not connected to vCenter Server $($vcenter.fqdn)"
         }
     }
     Catch {
