@@ -377,9 +377,6 @@ Export-ModuleMember -Function Add-ESXiDomainUser
 Function Install-WorkspaceOne { 
     # Deploy Workspace ONE Access Virtual Appliance
     Param (
-        [Parameter(Mandatory = $true)][String]$vcServer,
-        [Parameter(Mandatory = $true)][String]$vcUser,
-        [Parameter(Mandatory = $true)][String]$vcPass,
         [Parameter(Mandatory = $true)][String]$server,
         [Parameter(Mandatory = $true)][String]$user,
         [Parameter(Mandatory = $true)][String]$pass,
@@ -392,8 +389,9 @@ Function Install-WorkspaceOne {
     )
 
     Try {
-        Request-VCFToken -fqdn $server -Username $user -Password $pass | Out-Null
-        if ($accessToken) {
+        $vcenter = Get-vCenterServerDetails -server $server -user $user -pass $pass -domainType MANAGEMENT
+        Connect-VIServer -Server $vcenter.fqdn -User $vcenter.ssoAdmin -pass $vcenter.ssoAdminPass | Out-Null
+        if ($DefaultVIServer.Name -eq $($vcenter.fqdn)) {
             $wsaExists = Get-VM -Name $wsaHostname -ErrorAction SilentlyContinue
             if ($wsaExists) {
                 Write-Warning "A virtual machine called $wsaHostname already exists in vCenter Server $vcServer"
@@ -406,7 +404,7 @@ Function Install-WorkspaceOne {
                 $datacenter = (Get-Datacenter -Cluster $cluster).Name
                 $regionaPortgroup = (Get-VCFApplicationVirtualNetwork | Where-Object { $_.regionType -eq "REGION_A" }).name
 
-                $command = '"C:\Program Files\VMware\VMware OVF Tool\ovftool.exe" --noSSLVerify --acceptAllEulas  --allowAllExtraConfig --diskMode=thin --powerOn --name=' + $wsaHostname + ' --ipProtocol="IPv4" --ipAllocationPolicy="fixedAllocatedPolicy" --vmFolder=' + $wsaFolder + ' --net:"Network 1"=' + $regionaPortgroup + '  --datastore=' + $datastore + ' --X:injectOvfEnv --prop:vamitimezone=' + $timezone + '  --prop:vami.ip0.IdentityManager=' + $wsaIpAddress + ' --prop:vami.netmask0.IdentityManager=' + $wsaSubnetMask + ' --prop:vami.hostname=' + $wsaFqdn + ' --prop:vami.gateway.IdentityManager=' + $wsaGateway + ' --prop:vami.domain.IdentityManager=' + $domain + ' --prop:vami.searchpath.IdentityManager=' + $domain + ' --prop:vami.DNS.IdentityManager=' + $dnsServer1 + ',' + $dnsServer2 + ' ' + $wsaOvaPath + '  "vi://' + $vcUser + ':' + $vcPassword + '@' + $vcServer + '/' + $datacenter + '/host/' + $cluster + '/"'
+                $command = '"C:\Program Files\VMware\VMware OVF Tool\ovftool.exe" --noSSLVerify --acceptAllEulas  --allowAllExtraConfig --diskMode=thin --powerOn --name=' + $wsaHostname + ' --ipProtocol="IPv4" --ipAllocationPolicy="fixedAllocatedPolicy" --vmFolder=' + $wsaFolder + ' --net:"Network 1"=' + $regionaPortgroup + '  --datastore=' + $datastore + ' --X:injectOvfEnv --prop:vamitimezone=' + $timezone + '  --prop:vami.ip0.IdentityManager=' + $wsaIpAddress + ' --prop:vami.netmask0.IdentityManager=' + $wsaSubnetMask + ' --prop:vami.hostname=' + $wsaFqdn + ' --prop:vami.gateway.IdentityManager=' + $wsaGateway + ' --prop:vami.domain.IdentityManager=' + $domain + ' --prop:vami.searchpath.IdentityManager=' + $domain + ' --prop:vami.DNS.IdentityManager=' + $dnsServer1 + ',' + $dnsServer2 + ' ' + $wsaOvaPath + '  "vi://' + $vcenter.ssoAdmin + ':' + $vcenter.ssoAdminPass + '@' + $vcenter.fqdn + '/' + $datacenter + '/host/' + $cluster + '/"'
                 Invoke-Expression "& $command"
                 $wsaExists = Get-VM -Name $wsaHostname -ErrorAction SilentlyContinue
                 if ($wsaExists) {
@@ -458,9 +456,10 @@ Function Install-WorkspaceOne {
                     Write-Error "Workspace ONE Access Failed to deploy"
                 }
             }
+            Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue
         }
         else {
-            Write-Error "Failed to obtain access token from SDDC Manager, check details provided"
+            Write-Error  "Not connected to vCenter Server $($vcenter.fqdn)"
         }
     }
     Catch {
@@ -745,7 +744,6 @@ Function Test-ADAuthentication {
     }
 }
 Export-ModuleMember -Function Test-ADAuthentication
-
 
 Function Get-vCenterServerDetails {
     Param (
