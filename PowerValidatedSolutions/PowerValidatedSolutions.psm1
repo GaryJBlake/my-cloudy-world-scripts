@@ -342,7 +342,7 @@ Function Add-ESXiDomainUser {
                             Write-Warning "Active Directory Group '$addPrincipal' already assigned permissions to $($esxihost.resource.resourceName)"
                         }
                         else {
-                            New-VIPermission -Entity (Get-VMHost) -Principal $addPrincipal -Propagate $propagate -Role $role
+                            New-VIPermission -Entity $esxihost.resource.resourceName -Principal $addPrincipal -Propagate $propagate -Role $role
                             $checkPermission = Get-VIPermission | Where-Object { $_.Principal -eq $addPrincipal }
                             if ($checkPermission.Principal -eq $addPrincipal) {
                                 Write-Output "Active Directory Group '$addPrincipal' assigned the Administrator role to $($esxihost.resource.resourceName) Successfully"
