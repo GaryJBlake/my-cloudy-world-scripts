@@ -676,8 +676,9 @@ Function Add-VMFolder {
     )
 
     Try {
-        Request-VCFToken -fqdn $server -Username $user -Password $pass | Out-Null
-        if ($accessToken) {
+        $vcenter = Get-vCenterServerDetails -server $server -user $user -pass $pass -domainType MANAGEMENT
+        Connect-VIServer -Server $vcenter.fqdn -User $vcenter.ssoAdmin -pass $vcenter.ssoAdminPass | Out-Null
+        if ($DefaultVIServer.Name -eq $($vcenter.fqdn)) {
             $cluster = (Get-VCFCluster | Where-Object { $_.id -eq ((Get-VCFWorkloadDomain | Where-Object { $_.type -eq "MANAGEMENT" }).clusters.id) }).Name
             $datacenter = (Get-Datacenter -Cluster $cluster).Name
             $folderExists = (Get-Folder -Name $folderName -ErrorAction SilentlyContinue)
@@ -694,9 +695,10 @@ Function Add-VMFolder {
                     Write-Error "Creating VM and Template Folder '$folderName' in vCenter Server Failed"
                 }
             }
+            Disconnect-VIServer * -Force -Confirm:$false -WarningAction SilentlyContinue
         }
         else {
-            Write-Error "Failed to obtain access token from SDDC Manager, check details provided"
+            Write-Error  "Not connected to vCenter Server $($vcenter.fqdn)"
         }
     }
     Catch {
