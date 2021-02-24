@@ -39,6 +39,59 @@ if ($PSEdition -eq 'Desktop') {
 
 #########  Do not modify anything below this line. All user variables are in the accompanying JSON files #########
 
+#########  Start Initial Workspace One Appliance Configuration  ##########
+
+Function Initialize-WorkspaceOne {
+    # Perform Initial Configuration of Workspace ONE Access Virtual Appliance
+    Param (
+        [Parameter(Mandatory = $true)][String]$wsaFqdn,
+        [Parameter(Mandatory = $true)][String]$adminPass,
+        [Parameter(Mandatory = $true)][String]$rootPass,
+        [Parameter(Mandatory = $true)][String]$sshUserPass    
+    )
+    
+    Try {
+        $baseUri = "https://" + $wsaFqdn + ":8443"
+        $uri = $baseUri + "/login"
+        $response = Invoke-RestMethod $uri -Method 'GET' -SessionVariable webSession
+        $response | Out-File wsaResponse.txt
+        $tokenSource = (Select-String -Path wsaResponse.txt -Pattern 'window.ec_wiz.vk =')
+        $token = ($tokenSource -Split ("'"))[1]
+        Remove-Item wsaResponse.txt
+        if ($token) {
+            $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+            $headers.Add("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+            $headers.Add("X-Vk", "$token")
+            $headers.Add("Accept", "application/json")
+            # Set the Admin Password
+            $body = "password=" + $adminPass + "&confpassword=" + $adminPass
+            $uri = $baseUri + "/cfg/changePassword"
+            Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body -WebSession $webSession | Out-Null
+            # Set the Root & SSHUser Passwords
+            $body = "rootPassword=" + $rootPass + "&sshuserPassword=" + $sshUserPass
+            $uri = $baseUri + "/cfg/system"
+            Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body -WebSession $webSession  | Out-Null
+            # Initalize the Internal Database
+            $uri = $baseUri + "/cfg/setup/initialize"
+            Invoke-RestMethod $uri -Method 'POST' -Headers $headers -WebSession $webSession  | Out-Null
+            # Activate the default connector
+            $uri = $baseUri + "/cfg/setup/activateConnector"
+            Invoke-RestMethod $uri -Method 'POST' -Headers $headers -WebSession $webSession  | Out-Null
+            Write-Output "Initial configuration of Workspace ONE Access Virtual Appliance $wsaFqdn completed Succesfully"
+        }
+        else {
+            Write-Warning "Initial configuration of Workspace ONE Access Virtual Appliance $wsaFqdn has already been performed"
+        }
+    }
+    Catch {
+        Debug-CatchWriter -object $_ 
+    }
+}
+Export-ModuleMember -Function Initialize-WorkspaceOne
+
+#########  End Initial Workspace One Appliance Configuration  ##########
+
+
 #########  Start Authentication Functions  ##########
 
 Function Request-WSAToken {
@@ -94,7 +147,7 @@ Function Request-WSAToken {
 }
 Export-ModuleMember -Function Request-WSAToken
 
-#########  Start Authentication Functions  ##########
+#########  End Authentication Functions  ##########
 
 Function Get-WSAHealth {
     <#
