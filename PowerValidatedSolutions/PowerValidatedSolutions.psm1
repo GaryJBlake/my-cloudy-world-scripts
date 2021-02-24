@@ -819,6 +819,21 @@ Function Get-vCenterServerDetails {
 }
 Export-ModuleMember -Function Get-vCenterServerDetails
 
+Function Get-SsoPasswordPolicies {
+    Param (
+        [Parameter(Mandatory=$true)][String]$ssoAdminPass,
+        [Parameter(Mandatory=$true)][String]$ssoDomain,
+        [Parameter(Mandatory=$true)][String]$vmName,
+        [Parameter(Mandatory=$true)][String]$rootPass
+    )
+    $a,$b = $ssoDomain.split(".")
+    
+    $scriptCommand = "/opt/likewise/bin/ldapsearch -h localhost -w $ssoAdminPass -x -D `"cn=Administrator,cn=Users,dc=$a,dc=$b`" -b `"cn=password and lockout policy,dc=$a,dc=$b`" | grep vmwPassword"
+    $output = Invoke-VMScript -ScriptText $scriptCommand -vm $vmName -GuestUser "root" -GuestPassword $rootPass
+    $output.scriptOutput
+}
+Export-ModuleMember -Function Get-SsoPasswordPolicies
+
 ######### Start Shared Functions  ##########
 
 
