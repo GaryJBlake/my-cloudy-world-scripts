@@ -13,10 +13,10 @@ Function Request-WsaToken {
     	Obtains a session token
 
     	.DESCRIPTION
-    	The Request-WSAToken cmdlet connects to the specified Workspace ONE Access instance and requests a session token
+    	The Request-WsaToken cmdlet connects to the specified Workspace ONE Access instance and requests a session token
 
     	.EXAMPLE
-    	Request-WSAToken -fqdn sfo-wsa01.sfo.rainpole.io -username admin -password VMware1!
+    	Request-WsaToken -fqdn sfo-wsa01.sfo.rainpole.io -username admin -password VMware1!
         This example shows how to connect to a Workspace ONE Access instance and request a session token
   	#>
 
@@ -32,11 +32,13 @@ Function Request-WsaToken {
         $username = $creds.UserName.ToString()
         $password = $creds.GetNetworkCredential().password
     }
+
+    $Global:wsaFqdn = $fqdn
     
     # Validate credentials by executing an API call
     $headers = @{"Content-Type" = "application/json"}
     $headers.Add("Accept", "application/json; charset=utf-8")
-    $uri = "https://$fqdn/SAAS/API/1.0/REST/auth/system/login"
+    $uri = "https://$wsaFqdn/SAAS/API/1.0/REST/auth/system/login"
     $body = '{"username": "' + $username + '", "password": "' + $password + '", "issueToken": "true"}'
     
     Try {
@@ -44,14 +46,14 @@ Function Request-WsaToken {
         # PS Core has -SkipCertificateCheck implemented, PowerShell 5.x does not
         if ($PSEdition -eq 'Core') {
             $response = Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body -SkipCertificateCheck
-            $Global:accessToken = "HZN " + $response.sessionToken
+            $Global:wsaToken = "HZN " + $response.sessionToken
         }
         else {
             $response = Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body
-            $Global:accessToken = "HZN " + $response.sessionToken
+            $Global:wsaToken = "HZN " + $response.sessionToken
         }
         if ($response.sessionToken) {
-            Write-Output "Successfully Requested New Session Token From Workspace ONE Access instance: $fqdn"
+            Write-Output "Successfully Requested New Session Token From Workspace ONE Access instance: $wsaFqdn"
         }
     }
     Catch {

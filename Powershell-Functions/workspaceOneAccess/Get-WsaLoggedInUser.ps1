@@ -20,13 +20,9 @@ Function Get-WsaLoggedInUser {
         This example shows how to reetrieve details for the logged in user
   	#>
 
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$fqdn
-    )
-
     Try {
-        $headers = @{"Authorization" = "$accessToken"}
-        $uri = "https://$fqdn/SAAS/jersey/manager/api/scim/Me"
+        $headers = @{"Authorization" = "$wsaToken"}
+        $uri = "https://$wsaFqdn/SAAS/jersey/manager/api/scim/Me"
         Invoke-RestMethod $uri -Method 'GET' -Headers $headers
     }
     Catch {
