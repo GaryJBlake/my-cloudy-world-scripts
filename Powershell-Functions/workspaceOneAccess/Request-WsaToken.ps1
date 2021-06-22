@@ -1,9 +1,9 @@
-Function Request-WSAToken {
+Function Request-WsaToken {
     <#
         .NOTES
         ===========================================================================
         Created by:		Gary Blake
-        Date:			01/04/2020
+        Date:			09/03/2021
         Organization:	VMware
         Blog:           my-cloudy-world.com
         Twitter:        @GaryJBlake

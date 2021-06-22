@@ -20,6 +20,10 @@ Function Get-WsaHealth {
         This example shows how to reetrieve the health details of a Workspace ONE Access instance
   	#>
 
+    Param (
+        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$fqdn
+    )
+
     Try {
         $headers = @{"Authorization" = "$accessToken"}
         $uri = "https://$fqdn/SAAS/API/1.0/REST/system/health"
