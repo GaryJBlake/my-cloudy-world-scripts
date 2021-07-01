@@ -10,7 +10,7 @@ Function Request-WsaToken {
         ===========================================================================
         
 		.SYNOPSIS
-    	Obtains a session token
+    	Obtains a Worksapce ONE Access session token
 
     	.DESCRIPTION
     	The Request-WsaToken cmdlet connects to the specified Workspace ONE Access instance and requests a session token
