@@ -1,4 +1,5 @@
 <#	SCRIPT DETAILS
+
     .NOTES
     ===============================================================================================================
     .Created By:    Gary Blake
@@ -15,21 +16,18 @@
     ===============================================================================================================
     .DESCRIPTION
 
-    This script automates the process of configuring the credentials for the repository in SDDC Manager using the
-    Planning and Preparation Workbook as the input source.
-
-    Requires Planning and Preparation Workbook for VMware Cloud Foundation 4.3.0 or later
+    This script automates the process of configuring the Microsoft Certificate Authority Server within SDDC
+    Manager.
 
     .EXAMPLE
-
-    .\configureRepositoryCredentials.ps1 -Workbook E:\pnpWorkbook.xlsx
+    .\configureMicrosoftCa.ps1 -Workbook E:\pnpWorkbook.xlsx
 #>
 
-Param(
-    [Parameter (Mandatory=$true)] [String]$Workbook
+Param (
+    [Parameter (Mandatory = $true)] [String]$Workbook
 )
 
-$module = "Configure Repository Credentials"
+$module = "Configure Microsoft Certificate Authority"
 
 Try {
     # Setup a Log File
@@ -58,6 +56,27 @@ Catch {
     Debug-CatchWriter -object $_
 }
 
+Function configureMicrosoftCa {
+
+  Try {
+    LogMessage "Checking Certificate Authority Configuration"
+    $vcfCertCa = Get-VCFCertificateAuthConfiguration
+    if ($vcfCertCa.id -ne "Microsoft") {
+      $serverUrl = "https://$Global:activeDirectory.$Global:rootDomain/certsrv"
+      LogMessage "Configuring Microsoft Certificate Authority Connection in SDDC Manager with $serverUrl"
+      LogMessage "Using the Service Account named $Global:serviceAccount"
+      Set-VCFMicrosoftCA -serverUrl $serverUrl -username $Global:serviceAccount -password $Global:serviceAccountPassword -templateName $Global:caTemplateName | Out-Null
+      LogMessage "Configuration of Microsoft Certificate Authority in SDDC Manager Complete"
+    }
+    else {
+      LogMessage "Configuration Certificate Authority Already Done" Magenta
+    }
+  }
+  Catch {
+    $ErrorMessage = $_.Exception.Message
+    LogMessage "Error was: $ErrorMessage" Red
+  }
+}
 Try {
     Write-LogMessage -type INFO -message "Starting the Process of Generating the $module" -Colour Yellow
     Write-LogMessage -type INFO -message "Opening the Excel Workbook: $Workbook"
@@ -69,16 +88,31 @@ Try {
         Break
     }
     Write-LogMessage -type INFO -message "Extracting Worksheet Data from the Excel Workbook"
-    $sddcManagerFqdn    = $pnpWorkbook.Workbook.Names["sddc_mgr_fqdn"].Value
-    $sddcManagerUser    = $pnpWorkbook.Workbook.Names["sso_default_admin"].Value
-    $sddcManagerPass    = $pnpWorkbook.Workbook.Names["administrator_vsphere_local_password"].Value
-    $username           = $pnpWorkbook.Workbook.Names["user_svc_my_vmware"].Value
-    $password           = $pnpWorkbook.Workbook.Names["svc_my_vmware_password"].Value
+    $sddcManagerFqdn        = $pnpWorkbook.Workbook.Names["sddc_mgr_fqdn"].Value
+    $sddcManagerUser        = $pnpWorkbook.Workbook.Names["sso_default_admin"].Value
+    $sddcManagerPass        = $pnpWorkbook.Workbook.Names["administrator_vsphere_local_password"].Value
+    $activeDirectory        = "lab01ad01"
+    $domain                 = "sddc.local"
+    $serviceAccountUser     = "svc-mgr-ca"
+    $serviceAccountPass     = "VMw@re1!"
+    $caTemplateName         = "VMware"
+    $serverUrl              = "https://$activeDirectory.$domain/certsrv"
 
     Write-LogMessage -type INFO -message "Connecting to SDDC Manager: $sddcManagerFqdn"
     Request-VCFToken -fqdn $sddcManagerFqdn -username $sddcManagerUser -password $sddcManagerPass | Out-Null
     if ($accessToken) {
-        Write-LogMessage -type INFO -message "Checking SDDC Manager's Existing Repository Credentials"
+        Write-LogMessage -type INFO -message "Checking SDDC Manager's Microsoft Certificate Authority Configuration"
+        $vcfCertCa = Get-VCFCertificateAuthConfiguration
+        if ($vcfCertCa.id -ne "Microsoft") {
+            Write-LogMessage -type INFO -message "Configuring Microsoft Certificate Authority Connection in SDDC Manager with $serverUrl"
+            Write-LogMessage -type INFO -message "Connecting Using the Service Account: $serviceAccountUser"
+            pause
+          Set-VCFMicrosoftCA -serverUrl $serverUrl -username $Global:serviceAccount -password $Global:serviceAccountPassword -templateName $Global:caTemplateName | Out-Null
+          LogMessage "Configuration of Microsoft Certificate Authority in SDDC Manager Complete"
+        }
+
+
+        
         $checkDepotCreds = Get-VCFDepotCredential
         if (!$checkDepotCreds) {
             $createDepotCreds = Set-VCFDepotCredential -username $username -password $password
@@ -103,6 +137,3 @@ Try {
 Catch {
     Debug-CatchWriter -object $_
 }
-
-
-
