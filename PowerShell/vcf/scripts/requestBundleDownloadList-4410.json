@@ -1,0 +1,32 @@
+{
+    "bundles": [
+        {
+            "bundleId": "13d87a53-298d-4ee5-98ca-b9e10eece7a5",
+            "product": "SDDC_MANAGER"
+        },
+        {
+            "bundleId": "8c178f33-b28d-47d0-88da-aa94f309a042",
+            "product": "SDDC_MANAGER_CONFIG_DRIFT"
+        },
+        {
+            "bundleId": "05be2afd-990d-45bd-9472-fab032e8c696",
+            "product": "VCENTER_SERVER_UPGRADE"
+        },
+        {
+            "bundleId": "043e2b99-b36f-45b9-a4a2-1632a24764ef",
+            "product": "ESXI_UPGRADE"
+        },
+        {
+            "bundleId": "193486eb-53f5-40c7-8012-b5dcab515ebf",
+            "product": "NSXT_UPGRADE"
+        },
+        {
+            "bundleId": "05be2afd-990d-45bd-9472-fab032e8c696",
+            "product": "VCENTER_SERVER"
+        },
+        {
+            "bundleId": "3c32c5d6-b5e0-49c6-9a86-90bcd3de671e",
+            "product": "NSXT_INSTALL"
+        }
+    ]
+}

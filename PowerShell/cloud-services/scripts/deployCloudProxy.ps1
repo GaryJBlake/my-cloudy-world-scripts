@@ -27,15 +27,11 @@
     .\deployCloudProxy.ps1 -vCenterServer mcw-vc01.cloudy.io -username administrator@vsphere.local -password VMw@re1!
 #>
 
- Param(
-    [Parameter(Mandatory=$true)]
-        [String]$vCenterServer,
-    [Parameter(Mandatory=$true)]
-        [String]$username,
-    [Parameter(Mandatory=$true)]
-        [String]$password,
-    [Parameter(Mandatory=$true)]
-        [String]$cloudProxyConfig
+    Param(
+        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()]  [String]$vCenterServer,
+        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()]  [String]$username,
+        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()]  [String]$password,
+        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()]  [String]$cloudProxyConfig
 )
 
 # Statically Defined Variables
@@ -46,12 +42,9 @@ $cloudProxyOva = "$PSScriptRoot\VMware-Cloud-Services-Data-Collector.ova"
 Function LogMessage {
 
     Param(
-        [Parameter(Mandatory=$true)]
-            [String]$message,
-        [Parameter(Mandatory=$false)]
-            [String]$colour,
-        [Parameter(Mandatory=$false)]
-            [string]$skipnewline
+        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$message,
+        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$colour,
+        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [string]$skipnewline
     )
 
     If (!$colour) {
