@@ -1,0 +1,15 @@
+##################################################################################
+# VARIABLES
+##################################################################################
+
+# Credentials
+
+vsphere_server          = "vcenter.sddc-10-216-213-231.vmwarevmc.com"
+vsphere_username        = "cloudadmin@vmc.local"
+vsphere_password        = "**********"
+
+customization_name 			= "photon"
+customization_description 	= "Photon 4.0"
+customization_type 			= "Linux"
+customization_domain 		= "sfo.rainpole.io"
+customization_timezone		= "America/Los_Angeles"
