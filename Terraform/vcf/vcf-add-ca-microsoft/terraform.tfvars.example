@@ -1,0 +1,16 @@
+##################################################################################
+# VARIABLES
+##################################################################################
+
+# SDDC Manager
+
+vcf_instance = "ldn-vcf01.ldn.cloudy.io"
+vcf_username = "admin@local"
+vcf_password = "VMw@re1!VMw@re1!"
+
+# Microsoft Certificate Authority
+
+ca_server_url = "https://mcw-dc01.cloudy.io/certsrv"
+ca_username   = "svc-vcf-ca"
+ca_password   = "VMw@re1!"
+ca_template   = "VMware"

@@ -1,0 +1,14 @@
+##################################################################################
+# VARIABLES
+##################################################################################
+
+# SDDC Manager
+
+vcf_instance = "ldn-vcf01.ldn.cloudy.io"
+vcf_username = "admin@local"
+vcf_password = "VMw@re1!VMw@re1!"
+
+# Depot User
+
+depot_user     = "user@domain.com"
+depot_password = "VMw@re1!"
