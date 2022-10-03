@@ -95,6 +95,10 @@ Try {
             $wsaAdminPassword                         = $pnpWorkbook.Workbook.Names["local_admin_password"].Value
             $wsaRootPassword                          = $pnpWorkbook.Workbook.Names["global_env_admin_password"].Value
 
+            $smtpServerFqdn                           = $pnpWorkbook.Workbook.Names["smtp_server"].Value
+            $smtpServerPort                           = $pnpWorkbook.Workbook.Names["smtp_server_port"].Value
+            $smtpEmailAddress                         = "xint-wsa-no-reply@cloudy.io"
+
             $domainFqdn                               = $pnpWorkbook.Workbook.Names["region_ad_child_fqdn"].Value
             $baseDnUsers                              = $pnpWorkbook.Workbook.Names["child_ad_users_ou"].Value
             $baseDnGroups                             = $pnpWorkbook.Workbook.Names["child_ad_groups_ou"].Value
@@ -103,25 +107,25 @@ Try {
             $wsaSuperAdminGroup                       = $pnpWorkbook.Workbook.Names["group_child_gg_wsa_admins"].Value
             $wsaDirAdminGroup                         = $pnpWorkbook.Workbook.Names["group_child_gg_wsa_directory_admins"].Value
             $wsaReadOnlyGroup                         = $pnpWorkbook.Workbook.Names["group_child_gg_wsa_read_only"].Value
-            $adGroups                                 = $pnpWorkbook.Workbook.Names["group_gg_vrslcm_content_admins"].Value + "," + $pnpWorkbook.Workbook.Names["group_gg_vrslcm_content_developers"].Value + "," + $pnpWorkbook.Workbook.Names["group_gg_vrslcm_admins"].Value + "," + $wsaSuperAdminGroup + "," + $wsaDirAdminGroup + "," + $wsaReadOnlyGroup
+            $adGroups                                 = "$($pnpWorkbook.Workbook.Names["group_gg_vrslcm_content_admins"].Value)","$($pnpWorkbook.Workbook.Names["group_gg_vrslcm_content_developers"].Value)","$($pnpWorkbook.Workbook.Names["group_gg_vrslcm_admins"].Value)","$wsaSuperAdminGroup","$wsaDirAdminGroup","$wsaReadOnlyGroup"
             $rootCaPath                               = $filePath + "\" + "Root64.cer"
 
-            # $minLen = "6"
-            # $minLower = "1"
-            # $minUpper = "1"
-            # $minDigit = "1"
-            # $minSpecial = "1"
-            # $history = "5"
-            # $maxConsecutiveIdenticalCharacters = "1"
-            # $maxPreviousPasswordCharactersReused = "0"
-            # $tempPasswordTtlInHrs = "24"
-            # $passwordTtlInDays = "90" 
-            # $notificationThresholdInDays = "15" 
-            # $notificationIntervalInDays = "1"
+            $minLen                                   = "6"
+            $minLower                                 = "1"
+            $minUpper                                 = "1"
+            $minDigit                                 = "1"
+            $minSpecial                               = "1"
+            $history                                  = "5"
+            $maxConsecutiveIdenticalCharacters        = "1"
+            $maxPreviousPasswordCharactersReused      = "0"
+            $tempPasswordTtlInHrs                     = "24"
+            $passwordTtlInDays                        = "90" 
+            $notificationThresholdInDays              = "15" 
+            $notificationIntervalInDays               = "1"
 
-            # $numAttempts = "5"
-            # $attemptInterval = "15"
-            # $unlockInterval = "15"
+            $numAttempts                              = "5"
+            $attemptInterval                          = "15"
+            $unlockInterval                           = "15"
 
             # Attempting to Create the Cross Instance Data Center in vRealize Suite Lifecycle Manager
             Write-LogMessage -Type INFO -Message "Attempting to Create the Cross Instance Data Center in vRealize Suite Lifecycle Manager"
@@ -152,11 +156,6 @@ Try {
             $StatusMsg = New-WSADeployment -server $sddcManagerFqdn -user $sddcManagerUser -pass $sddcManagerPass -workbook $workbook -standard -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
             if ( $StatusMsg ) { Write-LogMessage -Type INFO -Message "$StatusMsg" } if ( $WarnMsg ) { Write-LogMessage -Type WARNING -Message $WarnMsg -Colour Magenta } if ( $ErrorMsg ) { Write-LogMessage -Type ERROR -Message $ErrorMsg -Colour Red }
 
-            # Attempting to Configure an Anti-Affinity Rule and a Virtual Machine Group for the Standard Workspace ONE Access Instance
-            Write-LogMessage -Type INFO -Message "Attempting to Configure an Anti-Affinity Rule and a Virtual Machine Group for the Standard Workspace ONE Access Instance"
-            $StatusMsg = Add-AntiAffinityRule -server $sddcManagerFqdn -user $sddcManagerUser -pass $sddcManagerPass -domain $sddcDomainName -ruleName $antiAffinityRuleName -antiAffinityVMs $antiAffinityVMs -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
-            if ( $StatusMsg ) { Write-LogMessage -Type INFO -Message "$StatusMsg" } if ( $WarnMsg ) { Write-LogMessage -Type WARNING -Message $WarnMsg -Colour Magenta } if ( $ErrorMsg ) { Write-LogMessage -Type ERROR -Message $ErrorMsg -Colour Red }
-            
             # Attempting to Configure a Virtual Machine Group for the Standard Workspace ONE Access Instance
             Write-LogMessage -Type INFO -Message "Attempting to Attempting to Configure a Virtual Machine Group for the Standard Workspace ONE Access Instance"
             $StatusMsg = Add-ClusterGroup -server $sddcManagerFqdn -user $sddcManagerUser -pass $sddcManagerPass -domain $sddcDomainName -drsGroupName $drsGroupName -drsGroupVMs $antiAffinityVMs -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
@@ -167,24 +166,32 @@ Try {
             $StatusMsg = Set-WorkspaceOneNtpConfig -server $sddcManagerFqdn -user $sddcManagerUser -pass $sddcManagerPass -wsaFqdn $wsaFqdn -rootPass $wsaRootPassword -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
             if ( $StatusMsg ) { Write-LogMessage -Type INFO -Message "$StatusMsg" } if ( $WarnMsg ) { Write-LogMessage -Type WARNING -Message $WarnMsg -Colour Magenta } if ( $ErrorMsg ) { Write-LogMessage -Type ERROR -Message $ErrorMsg -Colour Red }
 
-            # Configure Identity Source for the Standalone Workspace ONE Access Instance
-            Write-LogMessage -Type INFO -Message "Attempting to Configure Identity Source for the Standalone Workspace ONE Access Instance"
-            $StatusMsg = Add-WorkspaceOneDirectory -server $wsaFqdn -user admin -pass $wsaAdminPassword -domain $domainFqdn -baseDnUser $baseDnUsers -baseDnGroup $baseDnGroups -bindUserDn $wsaBindUserDn -bindUserPass $wsaBindUserPassword -adGroups $adGroups -certificate $rootCaPath -protocol ldaps -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
+            # Configure SMTP on the Standard Workspace ONE Access Instance
+            Write-LogMessage -Type INFO -Message "Attempting to Configure SMTP on the Standard Workspace ONE Access Instance"
+            $StatusMsg = Set-WorkspaceOneSmtpConfig -server $wsaFqdn -user admin -pass $wsaAdminPassword -smtpFqdn $smtpServerFqdn -smtpPort $smtpServerPort -smtpEmail $smtpEmailAddress -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
             if ( $StatusMsg ) { Write-LogMessage -Type INFO -Message "$StatusMsg" } if ( $WarnMsg ) { Write-LogMessage -Type WARNING -Message $WarnMsg -Colour Magenta } if ( $ErrorMsg ) { Write-LogMessage -Type ERROR -Message $ErrorMsg -Colour Red }
 
-            # Assign Roles to Active Directory Groups for the Clustered Workspace ONE Access Instance
+            # Configure Identity Source for the Standard Workspace ONE Access Instance
+            Write-LogMessage -Type INFO -Message "Attempting to Configure Identity Source for the Standard Workspace ONE Access Instance"
+            $StatusMsg = Add-WorkspaceOneDirectory -server $wsaFqdn -user admin -pass $wsaAdminPassword -domain $domainFqdn -baseDnUser $baseDnUsers -baseDnGroup $baseDnGroups -bindUserDn $wsaBindUserDn -bindUserPass $wsaBindUserPassword -adGroups $adGroups -certificate $rootCaPath -protocol ldaps -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
+            if ( $StatusMsg ) { Write-LogMessage -Type INFO -Message "$StatusMsg" } if ( $WarnMsg ) { Write-LogMessage -Type WARNING -Message $WarnMsg -Colour Magenta } if ( $ErrorMsg ) { Write-LogMessage -Type ERROR -Message $ErrorMsg -Colour Red }
+            Start-Sleep 5
+
+            # Assign Roles to Active Directory Groups for the Standard Workspace ONE Access Instance
             Write-LogMessage -Type INFO -Message "Attempting to Assign Roles to Active Directory Groups for the Standalone Workspace ONE Access Instance"
-            $StatusMsg =  Add-WorkspaceOneRole -server $wsaFqdn -user admin -pass $wsaAdminPassword -group $wsaSuperAdminGroup -role "Super Admin" -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
+            $StatusMsg = Add-WorkspaceOneRole -server $wsaFqdn -user admin -pass $wsaAdminPassword -group $wsaSuperAdminGroup -role "Super Admin" -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
             if ( $StatusMsg ) { Write-LogMessage -Type INFO -Message "$StatusMsg" } if ( $WarnMsg ) { Write-LogMessage -Type WARNING -Message $WarnMsg -Colour Magenta } if ( $ErrorMsg ) { Write-LogMessage -Type ERROR -Message $ErrorMsg -Colour Red }
             $StatusMsg =  Add-WorkspaceOneRole -server $wsaFqdn -user admin -pass $wsaAdminPassword -group $wsaDirAdminGroup -role "Directory Admin" -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
             if ( $StatusMsg ) { Write-LogMessage -Type INFO -Message "$StatusMsg" } if ( $WarnMsg ) { Write-LogMessage -Type WARNING -Message $WarnMsg -Colour Magenta } if ( $ErrorMsg ) { Write-LogMessage -Type ERROR -Message $ErrorMsg -Colour Red }
             $StatusMsg =  Add-WorkspaceOneRole -server $wsaFqdn -user admin -pass $wsaAdminPassword -group $wsaReadOnlyGroup -role "ReadOnly Admin" -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
             if ( $StatusMsg ) { Write-LogMessage -Type INFO -Message "$StatusMsg" } if ( $WarnMsg ) { Write-LogMessage -Type WARNING -Message $WarnMsg -Colour Magenta } if ( $ErrorMsg ) { Write-LogMessage -Type ERROR -Message $ErrorMsg -Colour Red }
 
-            # # Set WSA Password Policy
-            # Request-WSAToken -fqdn $wsaFqdn -user admin -pass $wsaAdminPassword
-            # Set-WSAPasswordPolicy -minLen $minLen -minLower $minLower -minUpper $minUpper -minDigit $minDigit -minSpecial $minSpecial -history $history -maxConsecutiveIdenticalCharacters $maxConsecutiveIdenticalCharacters -maxPreviousPasswordCharactersReused $maxPreviousPasswordCharactersReused -tempPasswordTtlInHrs $tempPasswordTtlInHrs -passwordTtlInDays $passwordTtlInDays -notificationThresholdInDays $notificationThresholdInDays -notificationIntervalInDays $notificationIntervalInDays | Get-WSAPasswordPolicy
-            # Set-WSAPasswordLockout -numAttempts $numAttempts -attemptInterval $attemptInterval -unlockInterval $unlockInterval
+            # Configure Local Password Policy for the Standard Workspace ONE Access Instance
+            Write-LogMessage -Type INFO -Message "Configure Local Password Policy for the Standard Workspace ONE Access Instance"
+            Request-WSAToken -fqdn $wsaFqdn -user admin -pass $wsaAdminPassword | Out-Null
+            $StatusMsg = Set-WSAPasswordPolicy -minLen $minLen -minLower $minLower -minUpper $minUpper -minDigit $minDigit -minSpecial $minSpecial -history $history -maxConsecutiveIdenticalCharacters $maxConsecutiveIdenticalCharacters -maxPreviousPasswordCharactersReused $maxPreviousPasswordCharactersReused -tempPasswordTtlInHrs $tempPasswordTtlInHrs -passwordTtlInDays $passwordTtlInDays -notificationThresholdInDays $notificationThresholdInDays -notificationIntervalInDays $notificationIntervalInDays -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
+            $StatusMsg = Set-WSAPasswordLockout -numAttempts $numAttempts -attemptInterval $attemptInterval -unlockInterval $unlockInterval -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable WarnMsg -ErrorVariable ErrorMsg
+            Write-LogMessage -Type INFO -Message "Configure Local Password Policy for the Standard Workspace ONE Access Instance: SUCCESSFUL"
         }
     }
 } Catch {

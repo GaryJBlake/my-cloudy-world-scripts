@@ -12,7 +12,7 @@
     Enables SSH on ESXi
 
     .DESCRIPTION
-    This scripts enables or disables SSH for ESXi
+    This scripts enables or disables SSH on ESXi using the list supplied in a text file
 
     .EXAMPLE
     .\esxiSshStatus.ps1 -esxiUser root -esxiPass VMw@re1! -esxiListFile ./esxiList.txt -logPath /Users/gblake/Downloads/cloudyLab -status start
