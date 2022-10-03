@@ -1,0 +1,8 @@
+ldn01-m01-esx01.ldn.cloudy.io
+ldn01-m01-esx02.ldn.cloudy.io
+ldn01-m01-esx03.ldn.cloudy.io
+ldn01-m01-esx04.ldn.cloudy.io
+ldn01-w01-esx01.ldn.cloudy.io
+ldn01-w01-esx02.ldn.cloudy.io
+ldn01-w01-esx03.ldn.cloudy.io
+ldn01-w01-esx04.ldn.cloudy.io
