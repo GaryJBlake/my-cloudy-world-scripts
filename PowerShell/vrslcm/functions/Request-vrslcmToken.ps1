@@ -9,15 +9,15 @@
     ===================================================================================================================
     
     .SYNOPSIS
-    Obtains a vRealize Suite Lifecycle Manager session token
+    Obtains a vRealize Suite Lifecycle Manager authorization token
 
     .DESCRIPTION
-    The Request-vrslcmToken cmdlet connects to the specified vRealize Suite Lifecycle Manager and 
-    obtains an authorization token. It is required once per session before running all other cmdlets.
+    The Request-vrslcmToken cmdlet connects to the specified vRealize Suite Lifecycle Manager and  obtains an
+    authorization token. It is required once per session before running all other cmdlets.
 
     .EXAMPLE
-    Request-vrslcmToken -fqdn xint-vrslcm.cloudy.io -username vcfadmin@local -password VMw@re1!
-    This example shows how to connect to the vRealize Suite Lifecycle Manager appliance
+    Request-vrslcmToken -fqdn xint-vrslcm01.cloudy.io -username vcfadmin@local -password VMw@re1!
+    This example shows how to obtain an authorization token to from the vRealize Suite Lifecycle Manager appliance
 #>
 
 Param (
@@ -41,17 +41,19 @@ $Global:vrslcmHeaders = $headers
 
 Try {
     # Validate credentials by executing an API call
-    $uri = "https://$vrslcmAppliance/lcmversion"
+    $uri = "https://$vrslcmAppliance/lcm/health/api/v2/status"
     if ($PSEdition -eq 'Core') {
-        $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $vrslcmHeaders -SkipCertificateCheck # PS Core has -SkipCertificateCheck implemented, PowerShell 5.x does not
+        $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $vrslcmHeaders -SkipCertificateCheck
     }
     else {
-        $response = Invoke-WebRequest -Method GET -Uri $uri -Headers $vrslcmHeaders
+        $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $vrslcmHeaders
     }
-    if ($response.StatusCode -eq 200) {
-        Write-Output "Successfully connected to the vRealize Suite Lifecycle Manager Appliance: $vrslcmAppliance"
+    if ($response) {
+        Write-Output "Successfully connected to vRealize Suite Lifecycle Manager Appliance: $vrslcmAppliance"
     }
 }
 Catch {
-    Write-Error $_.Exception.Message
+    if ($_.Exception.Message -match "401") {
+        Write-Error "Incorrect credentials provided to connect to vRealize Suite Lifecycle Manager Appliance: $vrslcmAppliance"
+    }
 }

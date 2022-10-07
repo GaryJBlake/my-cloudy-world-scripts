@@ -1,18 +1,18 @@
 <#
     .NOTES
-    ===========================================================================
+    ===================================================================================================================
     Created by:		Gary Blake
     Date:			22/06/2021
     Organization:	VMware
     Blog:           my-cloudy-world.com
     Twitter:        @GaryJBlake
-    ===========================================================================
+    ===================================================================================================================
 
     .SYNOPSIS
-    Creates a new Password in a password Store
+    Add a password to the locker
 
     .DESCRIPTION
-    The Add-vrslcmLockerPassword cmdlet add a new passwords to the vRealize Suite Lifecycle Manage Locker
+    The Add-vrslcmLockerPassword cmdlet adds a password to the vRealize Suite Lifecycle Manager Locker
 
     .EXAMPLE
     Add-vrslcmLockerPassword -userName admin -alias xint-admin -password VMw@re1! -description "Password for Cross-Instance Admin"
@@ -28,15 +28,23 @@ Param (
 
 Try {
     $uri = "https://$vrslcmAppliance/lcm/locker/api/v2/passwords"
-    $body = '{
-        "alias": "'+ $alias +'",
-        "password": "'+ $password +'",
-        "passwordDescription": "'+ $description +'",
-        "userName": "'+ $userName +'"
-    }'
+    if ($PsBoundParameters.ContainsKey("description")) {
+        $body = '{
+            "alias": "'+ $alias +'",
+            "password": "'+ $password +'",
+            "passwordDescription": "'+ $description +'",
+            "userName": "'+ $userName +'"
+        }'
+    } else {
+        $body = '{
+            "alias": "'+ $alias +'",
+            "password": "'+ $password +'",
+            "userName": "'+ $userName +'"
+        }'           
+    }
     $response = Invoke-RestMethod $uri -Method 'POST' -Headers $vrslcmHeaders -Body $body
     $response
 }
 Catch {
-    Write-Error $_.Exception.Message
+    Invoke-Expression -Command .\vrlscmCatchWriter.ps1
 }

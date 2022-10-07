@@ -9,14 +9,15 @@
     ===================================================================================================================
 
     .SYNOPSIS
-    Get paginated list of Certificates available in the Store
+    Get certificates in the locker
 
     .DESCRIPTION
-    The Get-vrslcmLockerCertificate cmdlet gets a paginated list of certificates available in the Locker
+    The Get-vrslcmLockerCertificate cmdlet gets a list of certificates available in the vRealize Suite Lifecycle
+    Manager Locker
 
     .EXAMPLE
     Get-vrslcmLockerCertificate
-    This example gets all certificates in the Locker
+    This example gets all certificates in the vRealize Suite Lifecycle Manager Locker
 
     .EXAMPLE
     Get-vrslcmLockerCertificate -vmid 0520f921-59e7-49cb-9d34-e4539f01cbd7
@@ -24,31 +25,32 @@
 
     .EXAMPLE
     Get-vrslcmLockerCertificate -alias xint-wsa01
-    This example gets the details of a certificate based on the vmid
+    This example gets the details of a certificate based on the alias
 #>
 
+[CmdletBinding(DefaultParametersetName = 'default')][OutputType('System.Management.Automation.PSObject')]
+
 Param (
-    [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$vmid,
-    [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$alias
+    [Parameter (Mandatory = $false, ParameterSetName = 'default')]
+    [Parameter (Mandatory = $false, ParameterSetName = 'vmid')] [ValidateNotNullOrEmpty()] [String]$vmid,
+    [Parameter (Mandatory = $false, ParameterSetName = 'alias')] [ValidateNotNullOrEmpty()] [String]$alias
 )
 
 Try {
     if ($PsBoundParameters.ContainsKey("vmid")) {
         $uri = "https://$vrslcmAppliance/lcm/locker/api/v2/certificates/$vmid"
         $response = Invoke-RestMethod $uri -Method 'GET' -Headers $vrslcmHeaders
-        $response
-    }
-    elseif ($PsBoundParameters.ContainsKey("alias")) {
+        $response 
+    } elseif ($PsBoundParameters.ContainsKey("alias")) {
         $uri = "https://$vrslcmAppliance/lcm/locker/api/v2/certificates"
         $response = Invoke-RestMethod $uri -Method 'GET' -Headers $vrslcmHeaders
         $response.certificates | Where-Object {$_.alias -eq $alias}
-    }
-    else {
+    } else {
         $uri = "https://$vrslcmAppliance/lcm/locker/api/v2/certificates"
         $response = Invoke-RestMethod $uri -Method 'GET' -Headers $vrslcmHeaders
         $response.certificates
     }
 }
 Catch {
-    Write-Error $_.Exception.Message
+    Invoke-Expression -Command .\vrlscmCatchWriter.ps1
 }
