@@ -1,0 +1,12 @@
+{
+    "bundles": [
+        {
+            "bundleId": "8da5d209-c8ac-493f-9e6a-f00a5bd5f155",
+            "product": "VCENTER_SERVER"
+        },
+        {
+            "bundleId": "4fe5a96f-d5c3-4730-9970-6d94bc5a63af",
+            "product": "NSXT_INSTALL"
+        }
+    ]
+}
