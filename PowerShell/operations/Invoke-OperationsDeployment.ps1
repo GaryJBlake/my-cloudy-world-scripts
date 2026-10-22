@@ -1124,71 +1124,85 @@ function Add-VcenterAdapter {
 
     try {
         Write-Host "[+] Adding vCenter adapter for: $($fqdn)" -ForegroundColor Cyan
-            if (-Not (Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn })) { 
-                if (-Not (Get-OperationsCredential | Where-Object { $_.name -eq $fqdn })) {
-                    $credentialJson = '{
-                        "name": "'+ $fqdn + '",
-                        "adapterKindKey": "VMWARE",
-                        "credentialKindKey": "PRINCIPALCREDENTIAL",
-                        "fields": [
-                            { "name": "USER", "value": "'+ $username + '" },
-                            { "name": "PASSWORD", "value": "'+ $password + '" }
-                    ]}'
-                    Set-Content -Path .\addCredential.json -Value $credentialJson -Encoding UTF8
-                    Add-OperationsCredential -json .\addCredential.json | Out-Null
-                    Remove-Item .\addCredential.json -Force -Confirm:$false
-                }
-
-                $vcUrlVal = if ($fqdn -like "https://*") { $fqdn } else { "https://$fqdn/sdk" }
-                $collector = Get-OperationsCollectorGroup | Select-Object -First 1
-                $collectorIdVal = if ($collector) { $collector.collectorId } else { "1" }
-                $credObj = Get-OperationsCredential | Where-Object { $_.name -eq $fqdn } | Select-Object -First 1
-
-                $adapterJson = '{
+        if (-Not (Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn -or $_.name -eq $fqdn })) { 
+            if (-Not (Get-OperationsCredential | Where-Object { $_.name -eq $fqdn })) {
+                $credentialJson = '{
                     "name": "'+ $fqdn + '",
-                    "description": "vCenter Adapter - '+ $fqdn + '",
                     "adapterKindKey": "VMWARE",
-                    "resourceKindKey" : "VMwareAdapter Instance",
-                    "monitoringInterval": 5,
-                    "collectorId": "'+ $collectorIdVal + '",
-                    "resourceIdentifiers": [
-                        { "name": "AUTODISCOVERY", "value": "true" },
-                        { "name": "PROCESSCHANGEEVENTS", "value": "true" },
-                        { "name": "VCURL", "value": "'+ $vcUrlVal + '" }
-                    ],
-                    "credential": {
-                        "id": "'+ $credObj.id + '"
-                        }
-                }'
-
-                Set-Content -Path .\addAdapter.json -Value $adapterJson -Encoding UTF8
-                Add-OperationsVcenterAdapter -json .\addAdapter.json | Out-Null
-                $testAdapter = Test-OperationsVcenterAdapterConnection -json .\addAdapter.json
-                $existingAdapter = Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn } | Select-Object -First 1
-
-                if ($existingAdapter -and $testAdapter) {
-                    $testAdapter | Add-Member -MemberType NoteProperty -Name "id" -Value $existingAdapter.id -Force
-                    $testAdapter | ConvertTo-Json -Depth 10 | Set-Content -Path .\createdAdapter.json -Encoding UTF8
-                    try { Test-OperationsAdapterConnection -json .\createdAdapter.json -patch -ErrorAction SilentlyContinue | Out-Null } catch {}
-                    try { Set-OperationsAdapter -json .\createdAdapter.json -patch -ErrorAction SilentlyContinue | Out-Null } catch {}
-                }
-
-                $finalAdapter = Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn } | Select-Object -First 1
-                if ($finalAdapter) {
-                    Start-Sleep 5
-                    Start-OperationsAdapter -adapterId $finalAdapter.id | Out-Null
-                    Write-Host "[✓] Added vCenter adapter to VCF Operations successfully" -ForegroundColor Green
-                } else {
-                    Write-Host "[x] Adding vCenter adapter to VCF Operations failed" -ForegroundColor Red
-                }
-
-                if (Test-Path .\addAdapter.json) { Remove-Item .\addAdapter.json -Force -Confirm:$false }
-                if (Test-Path .\createdAdapter.json) { Remove-Item .\createdAdapter.json -Force -Confirm:$false }
-            } else {
-                Write-Host "[!] vCenter adapter already exists in VCF Operations" -ForegroundColor Yellow
+                    "credentialKindKey": "PRINCIPALCREDENTIAL",
+                    "fields": [
+                        { "name": "USER", "value": "'+ $username + '" },
+                        { "name": "PASSWORD", "value": "'+ $password + '" }
+                ]}'
+                Set-Content -Path .\addCredential.json -Value $credentialJson -Encoding UTF8
+                Add-OperationsCredential -json .\addCredential.json | Out-Null
+                if (Test-Path .\addCredential.json) { Remove-Item .\addCredential.json -Force -Confirm:$false }
             }
+
+            # Retrieve real Collector Group UUID (.id property)
+            $collector = Get-OperationsCollectorGroup | Select-Object -First 1
+            $collectorIdVal = if ($collector -and $collector.id) { $collector.id } elseif ($collector -and $collector.collectorGroupId) { $collector.collectorGroupId } else { $null }
+
+            $credObj = Get-OperationsCredential | Where-Object { $_.name -eq $fqdn } | Select-Object -First 1
+            if (-not $credObj) {
+                throw "Could not find credential for $fqdn in VCF Operations"
+            }
+
+            $cleanFqdn = $fqdn -replace '^https?://', '' -replace '/.*$', ''
+
+            $adapterData = [ordered]@{
+                "name"               = $cleanFqdn
+                "description"        = "vCenter Adapter - $cleanFqdn"
+                "adapterKindKey"     = "VMWARE"
+                "resourceKindKey"    = "VMwareAdapter Instance"
+                "monitoringInterval" = 5
+                "resourceIdentifiers"= @(
+                    @{ "name" = "AUTODISCOVERY"; "value" = "true" },
+                    @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" },
+                    @{ "name" = "VCURL"; "value" = $cleanFqdn }
+                )
+                "credential"         = @{
+                    "id" = $credObj.id
+                }
+            }
+
+            if ($collectorIdVal) {
+                $adapterData["collectorId"] = $collectorIdVal
+            }
+
+            $adapterJson = $adapterData | ConvertTo-Json -Depth 5
+            Set-Content -Path .\addAdapter.json -Value $adapterJson -Encoding UTF8
+
+            Add-OperationsVcenterAdapter -json .\addAdapter.json | Out-Null
+            $testAdapter = Test-OperationsVcenterAdapterConnection -json .\addAdapter.json
+            $existingAdapter = Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $cleanFqdn -or $_.name -eq $cleanFqdn } | Select-Object -First 1
+
+            if ($existingAdapter -and $testAdapter) {
+                if (-not $testAdapter.id) {
+                    $testAdapter | Add-Member -MemberType NoteProperty -Name "id" -Value $existingAdapter.id -Force
+                }
+                $createdJson = $testAdapter | ConvertTo-Json -Depth 10
+                Set-Content -Path .\createdAdapter.json -Value $createdJson -Encoding UTF8
+                Test-OperationsAdapterConnection -json .\createdAdapter.json -patch | Out-Null
+                Set-OperationsAdapter -json .\createdAdapter.json -patch | Out-Null
+            }
+
+            $finalAdapter = Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $cleanFqdn -or $_.name -eq $cleanFqdn } | Select-Object -First 1
+            if ($finalAdapter) {
+                Start-Sleep -Seconds 5
+                Start-OperationsAdapter -adapterId $finalAdapter.id | Out-Null
+                Write-Host "[✓] Added vCenter adapter to VCF Operations successfully" -ForegroundColor Green
+            } else {
+                Write-Host "[x] Adding vCenter adapter to VCF Operations failed" -ForegroundColor Red
+            }
+
+            if (Test-Path .\addAdapter.json) { Remove-Item .\addAdapter.json -Force -Confirm:$false }
+            if (Test-Path .\createdAdapter.json) { Remove-Item .\createdAdapter.json -Force -Confirm:$false }
+        } else {
+            Write-Host "[!] vCenter adapter already exists in VCF Operations" -ForegroundColor Yellow
+        }
     } catch {
-        Write-Warning "[!] Add-VcenterAdapter encounter error: $($_.Exception.Message)"
+        Write-Error "Add-VcenterAdapter error: $_"
     }
 }
 
