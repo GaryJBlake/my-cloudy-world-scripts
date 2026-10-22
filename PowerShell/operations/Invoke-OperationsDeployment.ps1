@@ -573,24 +573,25 @@ function Set-EulaSetting {
         }
         $jsonBody = $bodyData | ConvertTo-Json -Depth 5
 
-        $operationsHeaders.Add("X-vRealizeOps-API-use-unsupported", "true") | Out-Null
+        if (-not $operationsHeaders.ContainsKey("X-vRealizeOps-API-use-unsupported")) {
+            $operationsHeaders.Add("X-vRealizeOps-API-use-unsupported", "true") | Out-Null
+        }
 
         Invoke-RestMethod -Method POST `
             -Uri "https://${operationsAppliance}/suite-api/internal/deployment/config/properties/java_util_HashSet" `
             -Headers $operationsHeaders `
             -Body $jsonBody `
+            -ContentType "application/json" `
             -SkipCertificateCheck `
         | Out-Null
-
-        $operationsHeaders.Remove("X-vRealizeOps-API-use-unsupported") | Out-Null
 
         Write-Host "[✓] End User License Agreement accepted successfully" -ForegroundColor Green
 
     } catch {
         Write-Error $_.Exception.Message
     } finally {
-        if ($operationsHeaders.ContainsKey("X-Ops-API-use-unsupported")) {
-            $operationsHeaders.Remove("X-Ops-API-use-unsupported") | Out-Null
+        if ($operationsHeaders.ContainsKey("X-vRealizeOps-API-use-unsupported")) {
+            $operationsHeaders.Remove("X-vRealizeOps-API-use-unsupported") | Out-Null
         }
     }
 }
@@ -608,23 +609,55 @@ function Set-CeipSetting {
         } elseif ($status -eq "DISABLED") {
             $setting = "false"
         }
+
+        # 1. Mark CEIP first-login wizard/modal as completed in internal properties
+        # This prevents the initial CEIP prompt dialog from appearing in the Web UI on first login
+        $ceipPropData = @{
+            keyValues = @(
+                @{
+                    key    = "ceipWizardFirstConfigDone"
+                    values = @( "true" )
+                }
+            )
+        }
+        $jsonPropBody = $ceipPropData | ConvertTo-Json -Depth 5
+
+        if (-not $operationsHeaders.ContainsKey("X-vRealizeOps-API-use-unsupported")) {
+            $operationsHeaders.Add("X-vRealizeOps-API-use-unsupported", "true") | Out-Null
+        }
+
+        Invoke-RestMethod -Method POST `
+            -Uri "https://${operationsAppliance}/suite-api/internal/deployment/config/properties/java_util_HashSet" `
+            -Headers $operationsHeaders `
+            -Body $jsonPropBody `
+            -ContentType "application/json" `
+            -SkipCertificateCheck `
+            -ErrorAction SilentlyContinue | Out-Null
+
+        # 2. Configure global telemetry status (Enabled/Disabled)
         $telemetrySetting = Invoke-RestMethod -Method GET `
             -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED" `
             -Headers $operationsHeaders `
-            -SkipCertificateCheck
+            -SkipCertificateCheck `
+            -ErrorAction SilentlyContinue
+
         if (-Not ($telemetrySetting.values -eq ${setting})) {
             Invoke-RestMethod -Method PUT `
-            -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED/${setting}" `
-            -Headers $operationsHeaders `
-            -SkipCertificateCheck `
-            -ErrorAction Stop `
-            | Out-Null
+                -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED/${setting}" `
+                -Headers $operationsHeaders `
+                -SkipCertificateCheck `
+                -ErrorAction Stop `
+                | Out-Null
             Write-Host "[✓] Broadcom's Customer Experience Improvement Program successfully ${status}" -ForegroundColor Green
         } else {
             Write-Host "[!] Broadcom's Customer Experience Improvement Program already ${status}" -ForegroundColor Yellow
         }
     } catch {
-
+        Write-Error $_.Exception.Message
+    } finally {
+        if ($operationsHeaders.ContainsKey("X-vRealizeOps-API-use-unsupported")) {
+            $operationsHeaders.Remove("X-vRealizeOps-API-use-unsupported") | Out-Null
+        }
     }
 }
 
