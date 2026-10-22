@@ -511,7 +511,7 @@ function Initialize-Operations {
     # --------------------------------------------------------------------------
     if ($statusCode -eq 202 -or $statusCode -eq 200) {
         $startTime = Get-Date
-        Write-Host "[+] Monitoring VCF Operations cluster initialization..." -ForegroundColor Cyan
+        Write-Host "[+] Monitoring VCF Operations cluster initialization (this normally takes 15-25 minutes)..." -ForegroundColor Cyan
 
         do {
             $elapsedStr = "$([math]::Floor(((Get-Date) - $startTime).TotalMinutes))m $([math]::Round(((Get-Date) - $startTime).TotalSeconds % 60))s"
@@ -525,10 +525,11 @@ function Initialize-Operations {
                     -ErrorAction Stop
 
                 $currentState = $response.cluster_state
+                $onlineState  = $response.online_state
 
                 # Check if target state reached
-                if ($currentState -eq $targetState -or $currentState -eq "ONLINE") {
-                    Write-Host "`n[✓] Cluster initialization complete! Final state: $currentState" -NoNewLine -ForegroundColor Green
+                if ($currentState -eq $targetState -or $currentState -eq "ONLINE" -or $onlineState -eq "ONLINE" -or $currentState -eq "RUNNING") {
+                    Write-Host "`n[✓] Cluster initialization complete! Final state: $currentState" -ForegroundColor Green
                     return $true
                 }
 
@@ -537,10 +538,14 @@ function Initialize-Operations {
                     throw "Cluster configuration failed with state: $currentState"
                 }
 
-                Write-Host "`r[!] Current status: $currentState... [Elapsed: $elapsedStr]    " -NoNewline -ForegroundColor Yellow
+                $statusDisplay = "Current status: $currentState"
+                if ($onlineState -and $onlineState -ne "NONE") { $statusDisplay += " (Online: $onlineState)" }
+                $msg = "[!] $statusDisplay... [Elapsed: $elapsedStr]"
+                Write-Host "`r$($msg.PadRight(85))" -NoNewline -ForegroundColor Yellow
             }
             catch {
-                Write-Host "`r[!] Waiting for CASA API service to respond... [Elapsed: $elapsedStr]    " -NoNewline -ForegroundColor Gray
+                $msg = "[!] Waiting for CASA API service to respond... [Elapsed: $elapsedStr]"
+                Write-Host "`r$($msg.PadRight(85))" -NoNewline -ForegroundColor Gray
             }
 
             # Check timeout limit
@@ -661,7 +666,7 @@ function Set-CeipSetting {
             Write-Host "[!] Broadcom's Customer Experience Improvement Program already ${status}" -ForegroundColor Yellow
         }
     } catch {
-        Write-Warning "[!] Could not configure CEIP setting: $($_.Exception.Message)"
+        Write-Host "[!] Could not configure CEIP setting: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
@@ -1174,7 +1179,6 @@ function Add-VcenterAdapter {
             }
     } catch {
         Write-Warning "[!] Add-VcenterAdapter encounter error: $($_.Exception.Message)"
-    }
     }
 }
 
