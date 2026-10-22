@@ -622,13 +622,13 @@ function Set-CeipSetting {
         }
         $jsonPropBody = $ceipPropData | ConvertTo-Json -Depth 5
 
-        if (-not $operationsHeaders.ContainsKey("X-vRealizeOps-API-use-unsupported")) {
-            $operationsHeaders.Add("X-vRealizeOps-API-use-unsupported", "true") | Out-Null
-        }
+        $internalHeaders = @{}
+        foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+        $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
 
         Invoke-RestMethod -Method POST `
             -Uri "https://${operationsAppliance}/suite-api/internal/deployment/config/properties/java_util_HashSet" `
-            -Headers $operationsHeaders `
+            -Headers $internalHeaders `
             -Body $jsonPropBody `
             -ContentType "application/json" `
             -SkipCertificateCheck `
@@ -641,10 +641,18 @@ function Set-CeipSetting {
             -SkipCertificateCheck `
             -ErrorAction SilentlyContinue
 
-        if (-Not ($telemetrySetting.values -eq ${setting})) {
+        if (-Not ($telemetrySetting.values -contains ${setting})) {
+            # Update global setting via PUT to TELEMETRY_ENABLED
+            $telemetryBody = @{
+                "key"    = "TELEMETRY_ENABLED"
+                "values" = @($setting)
+            } | ConvertTo-Json -Depth 5
+
             Invoke-RestMethod -Method PUT `
-                -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED/${setting}" `
+                -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings" `
                 -Headers $operationsHeaders `
+                -Body $telemetryBody `
+                -ContentType "application/json" `
                 -SkipCertificateCheck `
                 -ErrorAction Stop `
                 | Out-Null
@@ -654,10 +662,6 @@ function Set-CeipSetting {
         }
     } catch {
         Write-Error $_.Exception.Message
-    } finally {
-        if ($operationsHeaders.ContainsKey("X-vRealizeOps-API-use-unsupported")) {
-            $operationsHeaders.Remove("X-vRealizeOps-API-use-unsupported") | Out-Null
-        }
     }
 }
 
@@ -694,10 +698,16 @@ Function Add-OperationsVcenterAdapter {
             $operationsHeaders.Add("Content-Type", "application/json")
         }
 
-        # Suite API vCenter Integrations Endpoint (VCF 9.1)
-        $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters"
-        $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
-        $response
+        # Suite API endpoints: Try integrations endpoint first, fallback to adapters endpoint if 422 occurs
+        try {
+            $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters"
+            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
+            return $response
+        } catch {
+            $uri = "https://$operationsAppliance/suite-api/api/adapters"
+            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
+            return $response
+        }
     } Catch {
         $errDetails = $_.Exception.Message
         if ($_.Exception.Response) {
@@ -746,10 +756,15 @@ Function Test-OperationsVcenterAdapterConnection {
             $operationsHeaders.Add("Content-Type", "application/json")
         }
 
-        # Suite API vCenter Integrations Test Connection Endpoint (VCF 9.1)
-        $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters/testConnection"
-        $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
-        $response
+        try {
+            $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters/testConnection"
+            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
+            return $response
+        } catch {
+            $uri = "https://$operationsAppliance/suite-api/api/adapters/testConnection"
+            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
+            return $response
+        }
     } Catch {
         $errDetails = $_.Exception.Message
         if ($_.Exception.Response) {
@@ -1110,16 +1125,21 @@ function Add-VcenterAdapter {
                 Set-Content -Path .\addAdapter.json -Value $adapterJson -Encoding UTF8
                 Add-OperationsVcenterAdapter -json .\addAdapter.json | Out-Null
                 $testAdapter = Test-OperationsVcenterAdapterConnection -json .\addAdapter.json
-                $testAdapter.id = (Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn }).id
-                $testAdapter | ConvertTo-Json -Depth 10 | Set-Content -Path .\createdAdapter.json -Encoding UTF8
-                Test-OperationsAdapterConnection -json .\createdAdapter.json -patch | Out-Null
-                Set-OperationsAdapter -json .\createdAdapter.json -patch | Out-Null
+                $existingAdapter = Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn } | Select-Object -First 1
+
+                if ($existingAdapter -and $testAdapter) {
+                    $testAdapter | Add-Member -MemberType NoteProperty -Name "id" -Value $existingAdapter.id -Force
+                    $testAdapter | ConvertTo-Json -Depth 10 | Set-Content -Path .\createdAdapter.json -Encoding UTF8
+                    Test-OperationsAdapterConnection -json .\createdAdapter.json -patch | Out-Null
+                    Set-OperationsAdapter -json .\createdAdapter.json -patch | Out-Null
+                }
+
                 if (Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn }) {
                     Start-Sleep 10
                     Start-OperationsAdapter -adapterId (Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn }).id | Out-Null
                     Write-Host "[✓] Added vCenter adapter to VCF Operations successfully" -ForegroundColor Green
                 } else {
-                    Write-Host "[x] Adding vCenter adapter to VCF Operations failed" -ForegroundColor Read
+                    Write-Host "[x] Adding vCenter adapter to VCF Operations failed" -ForegroundColor Red
                 }
                 Remove-Item .\addAdapter.json -Force -Confirm:$false
                 Remove-Item .\createdAdapter.json -Force -Confirm:$false
