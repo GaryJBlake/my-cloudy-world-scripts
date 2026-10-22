@@ -1043,13 +1043,26 @@ Function Set-OperationsAdapter {
             $operationsHeaders.Add("Content-Type", "application/json")
         }
 
-        $lastError = ""
+        $attempts = @()
 
-        # 1. Try PUT /suite-api/api/adapters/$adapterId (Direct adapter update by ID)
+        # Build list of candidate endpoints
+        $endpoints = @(
+            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters" },
+            @{ Method = 'PATCH'; Uri = "https://$operationsAppliance/suite-api/api/adapters" },
+            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" },
+            @{ Method = 'PATCH'; Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" }
+        )
+
         if (-not [string]::IsNullOrWhiteSpace($adapterId)) {
+            $endpoints += @(
+                @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId" },
+                @{ Method = 'PATCH'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId" }
+            )
+        }
+
+        foreach ($ep in $endpoints) {
             try {
-                $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId"
-                $response = Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
+                $response = Invoke-RestMethod -Method $ep.Method -Uri $ep.Uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
                 return $response
             } catch {
                 $err = $_.Exception.Message
@@ -1061,51 +1074,13 @@ Function Set-OperationsAdapter {
                         if ($b) { $err = $b }
                     } catch {}
                 }
-                $lastError = "PUT $uri failed: $err"
+                $attempts += "$($ep.Method) $($ep.Uri) => $err"
             }
         }
 
-        # 2. Try PUT /suite-api/api/adapters (Bulk/collection adapter update)
-        try {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters"
-            $response = Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-            return $response
-        } catch {
-            $err = $_.Exception.Message
-            if ($_.Exception.Response) {
-                try {
-                    $s = $_.Exception.Response.GetResponseStream()
-                    $r = New-Object System.IO.StreamReader($s)
-                    $b = $r.ReadToEnd()
-                    if ($b) { $err = $b }
-                } catch {}
-            }
-            $lastError = "PUT $uri failed: $err"
-        }
-
-        # 3. Try PUT /suite-api/api/integrations/vcenters/$adapterId
-        if (-not [string]::IsNullOrWhiteSpace($adapterId)) {
-            try {
-                $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters/$adapterId"
-                $response = Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-                return $response
-            } catch {
-                $err = $_.Exception.Message
-                if ($_.Exception.Response) {
-                    try {
-                        $s = $_.Exception.Response.GetResponseStream()
-                        $r = New-Object System.IO.StreamReader($s)
-                        $b = $r.ReadToEnd()
-                        if ($b) { $err = $b }
-                    } catch {}
-                }
-                $lastError = "PUT $uri failed: $err"
-            }
-        }
-
-        Write-Error "Set-OperationsAdapter failed: $lastError"
+        throw "Set-OperationsAdapter failed on all endpoints:`n$($attempts -join "`n")"
     } Catch {
-        Write-Error "Set-OperationsAdapter error: $($_.Exception.Message)"
+        Write-Error $_.Exception.Message
     }
 }
 
@@ -1133,15 +1108,17 @@ Function Start-OperationsAdapter {
         Write-Host "[+] Starting collection for adapter instance: $adapterId" -ForegroundColor Cyan
 
         $started = $false
-        $lastError = ""
+        $attempts = @()
 
         $endpoints = @(
-            @{ Method = 'PUT'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/ON"; Body = $null },
-            @{ Method = 'PUT'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"; Body = $null },
-            @{ Method = 'PUT'; Uri = "https://$operationsAppliance/suite-api/api/adapters/monitoringstate/ON"; Body = (@{ adapterInstanceId = @($adapterId) } | ConvertTo-Json) },
-            @{ Method = 'PUT'; Uri = "https://$operationsAppliance/suite-api/api/adapters/monitoringstate/start"; Body = (@{ adapterInstanceId = @($adapterId) } | ConvertTo-Json) },
+            @{ Method = 'PUT';  Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/ON"; Body = $null },
+            @{ Method = 'PUT';  Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/STARTED"; Body = $null },
+            @{ Method = 'PUT';  Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"; Body = $null },
             @{ Method = 'POST'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/ON"; Body = $null },
-            @{ Method = 'POST'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"; Body = $null }
+            @{ Method = 'POST'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"; Body = $null },
+            @{ Method = 'PUT';  Uri = "https://$operationsAppliance/suite-api/api/adapters/monitoringstate/ON"; Body = (@{ adapterInstanceId = @($adapterId) } | ConvertTo-Json) },
+            @{ Method = 'PUT';  Uri = "https://$operationsAppliance/suite-api/api/adapters/monitoringstate/start"; Body = (@{ adapterInstanceId = @($adapterId) } | ConvertTo-Json) },
+            @{ Method = 'PUT';  Uri = "https://$operationsAppliance/suite-api/api/adapters/monitoringstate"; Body = (@{ adapterInstanceId = @($adapterId); monitoringState = "ON" } | ConvertTo-Json) }
         )
 
         foreach ($ep in $endpoints) {
@@ -1171,14 +1148,14 @@ Function Start-OperationsAdapter {
                         if ($respBody) { $err = $respBody }
                     } catch {}
                 }
-                $lastError = "$($ep.Method) $($ep.Uri) returned: $err"
+                $attempts += "$($ep.Method) $($ep.Uri) => $err"
             }
         }
 
         if ($started) {
             Write-Host "[✓] Adapter collection started successfully" -ForegroundColor Green
         } else {
-            Write-Error "Failed to start Operations adapter (${adapterId}): $lastError"
+            Write-Error "Failed to start Operations adapter (${adapterId}) on all endpoints:`n$($attempts -join "`n")"
         }
     } Catch {
         Write-Error "Failed to start Operations adapter (${adapterId}): $($_.Exception.Message)"
@@ -1308,7 +1285,19 @@ function Add-VcenterAdapter {
                 Set-Content -Path .\createdAdapter.json -Value $createdJson -Encoding UTF8
                 
                 Write-Host "[+] Saving trusted certificate and updating adapter configuration..." -ForegroundColor Cyan
-                Set-OperationsAdapter -json .\createdAdapter.json -adapterId $finalAdapter.id | Out-Null
+                try {
+                    Set-OperationsAdapter -json .\createdAdapter.json -adapterId $finalAdapter.id -ErrorAction Stop
+                } catch {
+                    if ($testResult.adapterInstance) {
+                        # Fallback: try sending full testResult object as payload
+                        Write-Host "[!] Retrying adapter configuration update with full test connection result object..." -ForegroundColor Yellow
+                        $fullTestJson = $testResult | ConvertTo-Json -Depth 10
+                        Set-Content -Path .\createdAdapter.json -Value $fullTestJson -Encoding UTF8
+                        Set-OperationsAdapter -json .\createdAdapter.json -adapterId $finalAdapter.id
+                    } else {
+                        Write-Error $_
+                    }
+                }
                 
                 if (Test-Path .\createdAdapter.json) { Remove-Item .\createdAdapter.json -Force -Confirm:$false }
             }
