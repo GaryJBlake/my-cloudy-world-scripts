@@ -976,15 +976,10 @@ Function Test-OperationsAdapterConnection {
 
         .PARAMETER json
         The JSON file to use for the test.
-
-        .PARAMETER patch
-        Patch the adapter based on the response from the test.
     #>
 
-
     Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json,
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [Switch]$patch
+        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json
     )
 
     Try {
@@ -998,14 +993,9 @@ Function Test-OperationsAdapterConnection {
         if (-not $operationsHeaders.ContainsKey("Content-Type")) {
             $operationsHeaders.Add("Content-Type", "application/json")
         }
-        if ($PsBoundParameters.ContainsKey("patch")) {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters/testConnection"
-            Invoke-RestMethod -Method 'PATCH' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
-        } else {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters/testConnection"
-            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
-            $response
-        }
+        $uri = "https://$operationsAppliance/suite-api/api/adapters/testConnection"
+        $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
+        $response
     } Catch {
         Write-Warning "[!] Test-OperationsAdapterConnection warning: $($_.Exception.Message)"
     }
@@ -1025,14 +1015,10 @@ Function Set-OperationsAdapter {
 
         .PARAMETER json
         The JSON file to use for the update.
-
-        .PARAMETER patch
-        Patch the adapter based on the response from the test.
     #>
 
     Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json,
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [Switch]$patch
+        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json
     )
 
     Try {
@@ -1046,14 +1032,9 @@ Function Set-OperationsAdapter {
         if (-not $operationsHeaders.ContainsKey("Content-Type")) {
             $operationsHeaders.Add("Content-Type", "application/json")
         }
-        if ($PsBoundParameters.ContainsKey("patch")) {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters"
-            Invoke-RestMethod -Method 'PATCH' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
-        } else {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters"
-            $response = Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
-            $response
-        }
+        $uri = "https://$operationsAppliance/suite-api/api/adapters"
+        $response = Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
+        $response
     } Catch {
         Write-Warning "[!] Set-OperationsAdapter warning: $($_.Exception.Message)"
     }
@@ -1174,18 +1155,7 @@ function Add-VcenterAdapter {
             Set-Content -Path .\addAdapter.json -Value $adapterJson -Encoding UTF8
 
             Add-OperationsVcenterAdapter -json .\addAdapter.json | Out-Null
-            $testAdapter = Test-OperationsVcenterAdapterConnection -json .\addAdapter.json
-            $existingAdapter = Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $cleanFqdn -or $_.name -eq $cleanFqdn } | Select-Object -First 1
-
-            if ($existingAdapter -and $testAdapter) {
-                if (-not $testAdapter.id) {
-                    $testAdapter | Add-Member -MemberType NoteProperty -Name "id" -Value $existingAdapter.id -Force
-                }
-                $createdJson = $testAdapter | ConvertTo-Json -Depth 10
-                Set-Content -Path .\createdAdapter.json -Value $createdJson -Encoding UTF8
-                Test-OperationsAdapterConnection -json .\createdAdapter.json -patch | Out-Null
-                Set-OperationsAdapter -json .\createdAdapter.json -patch | Out-Null
-            }
+            Test-OperationsVcenterAdapterConnection -json .\addAdapter.json | Out-Null
 
             $finalAdapter = Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $cleanFqdn -or $_.name -eq $cleanFqdn } | Select-Object -First 1
             if ($finalAdapter) {
