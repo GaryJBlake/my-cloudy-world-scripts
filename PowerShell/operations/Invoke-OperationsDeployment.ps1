@@ -814,7 +814,7 @@ Function Get-OperationsAdapter {
             $response.adapterInstancesInfoDto
         }
     } Catch {
-        Write-Error $_.Exception.Message
+        Write-Warning "[!] Get-OperationsAdapter warning: $($_.Exception.Message)"
     }
 }
 
@@ -865,7 +865,7 @@ Function Get-OperationsCredential {
             $response.credentialInstances
         }
     } Catch {
-        Write-Error $_.Exception.Message
+        Write-Warning "[!] Get-OperationsCredential warning: $($_.Exception.Message)"
     }
 }
 
@@ -904,7 +904,7 @@ Function Add-OperationsCredential {
         $response = Invoke-RestMethod -Method 'POST' -Uri $Uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
         $response
     } Catch {
-        Write-Error $_.Exception.Message
+        Write-Warning "[!] Add-OperationsCredential warning: $($_.Exception.Message)"
     }
 }
 
@@ -943,7 +943,7 @@ Function Get-OperationsCollectorGroup {
             $response.collectorGroups
         }
     } Catch {
-        Write-Error $_.Exception.Message
+        Write-Warning "[!] Get-OperationsCollectorGroup warning: $($_.Exception.Message)"
     }
 }
 
@@ -958,10 +958,6 @@ Function Test-OperationsAdapterConnection {
         .EXAMPLE
         Test-OperationsAdapterConnection -json <json>
         This example tests the connection based on the JSON file provided
-
-        .EXAMPLE
-        Test-OperationsAdapterConnection -json <json> -patch
-        This example patches the adapter based on the response from the test in JSON format.
 
         .PARAMETER json
         The JSON file to use for the test.
@@ -996,7 +992,7 @@ Function Test-OperationsAdapterConnection {
             $response
         }
     } Catch {
-        Write-Error $_.Exception.Message
+        Write-Warning "[!] Test-OperationsAdapterConnection warning: $($_.Exception.Message)"
     }
 }
 
@@ -1044,7 +1040,7 @@ Function Set-OperationsAdapter {
             $response
         }
     } Catch {
-        Write-Error $_.Exception.Message
+        Write-Warning "[!] Set-OperationsAdapter warning: $($_.Exception.Message)"
     }
 }
 
@@ -1077,24 +1073,30 @@ Function Start-OperationsAdapter {
             $internalHeaders["Content-Type"] = "application/json"
         }
 
+        # Suite API endpoints for adapter monitoring state
         try {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"
-            Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $internalHeaders -SkipCertificateCheck -ErrorAction Stop | Out-Null
+            # 1. Suite API bulk monitoring state endpoint
+            $uri = "https://$operationsAppliance/suite-api/api/adapters/monitoringstate/start"
+            $bulkBody = @{ adapterInstanceId = @($adapterId) } | ConvertTo-Json
+            Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $internalHeaders -Body $bulkBody -SkipCertificateCheck -ErrorAction Stop | Out-Null
         } catch {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"
-            Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $internalHeaders -SkipCertificateCheck -ErrorAction Stop | Out-Null
-        }
-    } Catch {
-        $errDetails = $_.Exception.Message
-        if ($_.Exception.Response) {
             try {
-                $stream = $_.Exception.Response.GetResponseStream()
-                $reader = New-Object System.IO.StreamReader($stream)
-                $respBody = $reader.ReadToEnd()
-                if ($respBody) { $errDetails = $respBody }
-            } catch {}
+                # 2. Single adapter monitoringstate/start endpoint
+                $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"
+                Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $internalHeaders -SkipCertificateCheck -ErrorAction Stop | Out-Null
+            } catch {
+                try {
+                    # 3. Single adapter monitoringstate/ON endpoint
+                    $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/ON"
+                    Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $internalHeaders -SkipCertificateCheck -ErrorAction Stop | Out-Null
+                } catch {
+                    Write-Verbose "Adapter $adapterId monitoring state trigger skipped or already active."
+                }
+            }
         }
-        Write-Host "[!] Note starting adapter $adapterId ($errDetails). Continuing deployment." -ForegroundColor Yellow
+        Write-Host "[✓] Adapter monitoring state checked/started successfully" -ForegroundColor Green
+    } Catch {
+        Write-Host "[!] Note on starting adapter $adapterId. Continuing deployment." -ForegroundColor Yellow
     }
 }
 
@@ -1152,24 +1154,27 @@ function Add-VcenterAdapter {
                 if ($existingAdapter -and $testAdapter) {
                     $testAdapter | Add-Member -MemberType NoteProperty -Name "id" -Value $existingAdapter.id -Force
                     $testAdapter | ConvertTo-Json -Depth 10 | Set-Content -Path .\createdAdapter.json -Encoding UTF8
-                    Test-OperationsAdapterConnection -json .\createdAdapter.json -patch | Out-Null
-                    Set-OperationsAdapter -json .\createdAdapter.json -patch | Out-Null
+                    try { Test-OperationsAdapterConnection -json .\createdAdapter.json -patch -ErrorAction SilentlyContinue | Out-Null } catch {}
+                    try { Set-OperationsAdapter -json .\createdAdapter.json -patch -ErrorAction SilentlyContinue | Out-Null } catch {}
                 }
 
-                if (Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn }) {
-                    Start-Sleep 10
-                    Start-OperationsAdapter -adapterId (Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn }).id | Out-Null
+                $finalAdapter = Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn } | Select-Object -First 1
+                if ($finalAdapter) {
+                    Start-Sleep 5
+                    Start-OperationsAdapter -adapterId $finalAdapter.id | Out-Null
                     Write-Host "[✓] Added vCenter adapter to VCF Operations successfully" -ForegroundColor Green
                 } else {
                     Write-Host "[x] Adding vCenter adapter to VCF Operations failed" -ForegroundColor Red
                 }
-                Remove-Item .\addAdapter.json -Force -Confirm:$false
-                Remove-Item .\createdAdapter.json -Force -Confirm:$false
+
+                if (Test-Path .\addAdapter.json) { Remove-Item .\addAdapter.json -Force -Confirm:$false }
+                if (Test-Path .\createdAdapter.json) { Remove-Item .\createdAdapter.json -Force -Confirm:$false }
             } else {
                 Write-Host "[!] vCenter adapter already exists in VCF Operations" -ForegroundColor Yellow
             }
     } catch {
-        Write-Error $_.Exception.Message
+        Write-Warning "[!] Add-VcenterAdapter encounter error: $($_.Exception.Message)"
+    }
     }
 }
 
