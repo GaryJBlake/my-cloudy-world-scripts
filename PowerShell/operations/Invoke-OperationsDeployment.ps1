@@ -1095,7 +1095,7 @@ Function Start-OperationsAdapter {
         if ($started) {
             Write-Host "[✓] Adapter collection started successfully" -ForegroundColor Green
         } else {
-            Write-Host "[!] Note on starting adapter $adapterId: Monitoring state request completed or already active." -ForegroundColor Yellow
+            Write-Host "[!] Note on starting adapter ${adapterId}: Monitoring state request completed or already active." -ForegroundColor Yellow
         }
     } Catch {
         $errDetails = $_.Exception.Message
