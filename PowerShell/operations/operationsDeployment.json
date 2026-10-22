@@ -1,10 +1,10 @@
 {
     "vcenter": {
-        "fqdn": "sfo-m01-vc01.sfo.rainpole.io",
-        "username": "administrator@vsphere.local",
+        "fqdn": "sfo-w03-vc01.sfo.rainpole.io",
+        "username": "administrator@sfo-w03.local",
         "password": "VMw@re1!VMw@re1!",
-        "targetEsx": "sfo01-m01-r01-esx01.sfo.rainpole.io",
-        "datastore": "sfo-m01-cl01-ds-vsan01",
+        "targetEsx": "sfo01-w03-r01-esx01.sfo.rainpole.io",
+        "datastore": "sfo-w03-sfo-w03-cl01-vsan01",
         "portgroup": "sfo-m01-cl01-vds01-pg-vm-mgmt"
     },
     "operations": {
@@ -15,13 +15,13 @@
         "gateway": "10.11.10.1",
         "netmask": "255.255.255.0",
         "master": {
-            "fqdn": "flt-ops02.rainpole.io",
+            "fqdn": "sfo-ops01.sfo.rainpole.io",
             "ipAddress": "10.11.10.205"
         }
     },
     "licenseServer": {
         "adminPassword": "VMw@re1!VMw@re1!",
-        "fqdn": "flt-lc02.rainpole.io",
+        "fqdn": "sfo-lc01.sfo.rainpole.io",
         "ipAddress": "10.11.10.206",
         "gateway": "10.11.10.1",
         "netmask": "255.255.255.0",
