@@ -1,0 +1,18 @@
+{
+    "backupSchedules": [
+        {
+            "resourceType": "SDDC_MANAGER",
+            "frequency": "WEEKLY",
+            "hourOfDay": 23,
+            "minuteOfHour": 0,
+            "daysOfWeek": [ "TUESDAY", "THURSDAY" ],
+            "takeScheduledBackups": true,
+            "takeBackupOnStateChange": false,
+            "retentionPolicy": {
+                "numberOfMostRecentBackups": 3,
+                "numberOfDaysOfHourlyBackups": 3,
+                "numberOfDaysOfDailyBackups": 3
+            }
+        }
+    ]
+}

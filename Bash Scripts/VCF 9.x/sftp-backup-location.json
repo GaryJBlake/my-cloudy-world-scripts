@@ -1,0 +1,15 @@
+{
+  "backupConfigSpec": {
+    "storage": {
+      "sftp": {
+        "host": "10.167.173.55",
+        "port": "22",
+        "username": "svc-vcf-bck",
+        "password": "VMw@re1!",
+        "directory": "/media/backups/",
+        "thumbprint": "SHA256:pGLHaf7zhviq9ReTA75fj7wCHXftKKj6FLRbIcKp5xo"
+      }
+    },
+    "encryptionPassphrase": "VMw@re1!VMw@re1!"
+  }
+}

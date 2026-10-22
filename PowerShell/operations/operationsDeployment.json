@@ -1,0 +1,35 @@
+{
+    "vcenter": {
+        "fqdn": "sfo-m01-vc01.sfo.rainpole.io",
+        "username": "administrator@vsphere.local",
+        "password": "VMw@re1!VMw@re1!",
+        "targetEsx": "sfo01-m01-r01-esx01.sfo.rainpole.io",
+        "datastore": "sfo-m01-cl01-ds-vsan01",
+        "portgroup": "sfo-m01-cl01-vds01-pg-vm-mgmt"
+    },
+    "operations": {
+        "adminPassword": "VMw@re1!VMw@re1!",
+        "rootPassword": "VMw@re1!VMw@re1!",
+        "size": "small",
+        "ovaPath": "F:/PlatformTools/binaries/Operations-Appliance-9.1.1.0.25628919.ova",
+        "gateway": "10.11.10.1",
+        "netmask": "255.255.255.0",
+        "master": {
+            "fqdn": "flt-ops02.rainpole.io",
+            "ipAddress": "10.11.10.205"
+        }
+    },
+    "licenseServer": {
+        "adminPassword": "VMw@re1!VMw@re1!",
+        "fqdn": "flt-lc02.rainpole.io",
+        "ipAddress": "10.11.10.206",
+        "gateway": "10.11.10.1",
+        "netmask": "255.255.255.0",
+        "ovaPath": "F:/PlatformTools/binaries/Vcf-License-Server-9.1.1.0.25679819.ova"
+    },
+    "dnsServers": "10.11.10.4, 10.11.10.5",
+    "ntpServers": [
+        "ntp0.sfo.rainpole.io",
+        "ntp1.sfo.rainpole.io"
+    ]
+}

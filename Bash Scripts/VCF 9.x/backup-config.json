@@ -1,0 +1,15 @@
+{
+    "vcenterFqdn": "sfo-m01-vc01.sfo.rainpole.io",
+    "vcenterUser": "administrator@vsphere.local",
+    "vcenterPass": "VMw@re1!VMw@re1!",
+    "sftpServerIp": "10.167.173.55",
+    "sftpDirectory": "/media/backups/",
+    "sftpUser": "svc-vcf-bck",
+    "sftpPass": "VMw@re1!",
+    "encryptionPassphrase": "VMw@re1!VMw@re1!",
+    "backupSchedule": {
+        "hour": 23,
+        "minute": 0,
+        "retention": 3
+    }
+}

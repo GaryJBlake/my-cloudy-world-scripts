@@ -1,0 +1,8 @@
+{
+    "name": "San-Francisco",
+    "description": "DNS Servers for San Francisco",
+    "settings": {
+        "type": "DNS", 
+        "servers": [ "10.11.10.4", "10.11.10.5" ]
+    }
+}

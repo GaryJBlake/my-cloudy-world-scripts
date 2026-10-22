@@ -1,0 +1,13 @@
+{
+    "backupConfigSpec": {
+        "fullSchedule": {
+        "enabled": true,
+        "schedule": {
+            "days": ["MON", "TUE", "WED", "THU", "FRI"],
+            "startTime": "23:00:00+01:00"
+        }
+    },
+        "incrementalSchedule": { "enabled": false },
+        "retention": { "maxBackups": 3 }
+    }
+}

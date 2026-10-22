@@ -1,0 +1,11 @@
+{
+    "name": "San-Francisco",
+    "description": "NTP Servers for San Francisco",
+    "settings": {
+        "type": "NTP", 
+        "servers": [
+            "ntp0.sfo.rainpole.io",
+            "ntp1.sfo.rainpole.io"
+        ]
+    }
+}

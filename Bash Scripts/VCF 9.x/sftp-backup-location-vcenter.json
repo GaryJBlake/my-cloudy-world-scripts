@@ -1,0 +1,12 @@
+{
+    "schedule": "default",
+    "spec": {
+        "location": "sftp://10.167.173.55/media/backups/",
+        "location_user": "svc-vcf-bck",
+        "location_password": "VMw@re1!",
+        "parts": ["supervisors", "seat", "common"],
+        "backup_password": "VMw@re1!VMw@re1!",
+        "recurrence_info": { "days": [], "hour": 23, "minute": 0 },
+        "retention_info": { "max_count": 3 }
+    }
+}
