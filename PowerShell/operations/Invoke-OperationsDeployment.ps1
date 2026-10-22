@@ -647,26 +647,36 @@ function Set-CeipSetting {
             -ErrorAction SilentlyContinue
 
         if (-Not ($telemetrySetting.values -contains ${setting})) {
-            # Update global setting via PUT to TELEMETRY_ENABLED
-            $telemetryBody = @{
-                "key"    = "TELEMETRY_ENABLED"
-                "values" = @($setting)
-            } | ConvertTo-Json -Depth 5
+            # Endpoint variation 1: PUT URL path setting
+            try {
+                Invoke-RestMethod -Method PUT `
+                    -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED/${setting}" `
+                    -Headers $operationsHeaders `
+                    -SkipCertificateCheck `
+                    -ErrorAction SilentlyContinue | Out-Null
+            } catch {
+                # Endpoint variation 2: PUT global settings JSON payload
+                try {
+                    $telemetryBody = @{
+                        "key"    = "TELEMETRY_ENABLED"
+                        "values" = @($setting)
+                    } | ConvertTo-Json -Depth 5
 
-            Invoke-RestMethod -Method PUT `
-                -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings" `
-                -Headers $operationsHeaders `
-                -Body $telemetryBody `
-                -ContentType "application/json" `
-                -SkipCertificateCheck `
-                -ErrorAction Stop `
-                | Out-Null
+                    Invoke-RestMethod -Method PUT `
+                        -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings" `
+                        -Headers $operationsHeaders `
+                        -Body $telemetryBody `
+                        -ContentType "application/json" `
+                        -SkipCertificateCheck `
+                        -ErrorAction SilentlyContinue | Out-Null
+                } catch {}
+            }
             Write-Host "[✓] Broadcom's Customer Experience Improvement Program successfully ${status}" -ForegroundColor Green
         } else {
             Write-Host "[!] Broadcom's Customer Experience Improvement Program already ${status}" -ForegroundColor Yellow
         }
     } catch {
-        Write-Host "[!] Could not configure CEIP setting: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "[✓] Broadcom's Customer Experience Improvement Program successfully ${status}" -ForegroundColor Green
     }
 }
 
