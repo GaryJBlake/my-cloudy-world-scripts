@@ -661,7 +661,7 @@ function Set-CeipSetting {
             Write-Host "[!] Broadcom's Customer Experience Improvement Program already ${status}" -ForegroundColor Yellow
         }
     } catch {
-        Write-Error $_.Exception.Message
+        Write-Warning "[!] Could not configure CEIP setting: $($_.Exception.Message)"
     }
 }
 
@@ -1057,8 +1057,8 @@ Function Start-OperationsAdapter {
         The Start-OperationsAdapter cmdlet starts the collection of an adapter in VMware Aria Operations
 
         .EXAMPLE
-        Start-OperationsAdapter -adpaterId <id>
-        This example starts the adpater by id.
+        Start-OperationsAdapter -adapterId <id>
+        This example starts the adapter by id.
 
         .PARAMETER adapterId
         The ID of the adapter to start.
@@ -1069,10 +1069,32 @@ Function Start-OperationsAdapter {
     )
 
     Try {
-        $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"
-        Invoke-RestMethod -Method 'PUT' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck # API has no response
+        $internalHeaders = @{}
+        foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+        $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
+        $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+        if (-not $internalHeaders.ContainsKey("Content-Type")) {
+            $internalHeaders["Content-Type"] = "application/json"
+        }
+
+        try {
+            $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"
+            Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $internalHeaders -SkipCertificateCheck -ErrorAction Stop | Out-Null
+        } catch {
+            $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"
+            Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $internalHeaders -SkipCertificateCheck -ErrorAction Stop | Out-Null
+        }
     } Catch {
-        Write-Error $_.Exception.Message
+        $errDetails = $_.Exception.Message
+        if ($_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($stream)
+                $respBody = $reader.ReadToEnd()
+                if ($respBody) { $errDetails = $respBody }
+            } catch {}
+        }
+        Write-Host "[!] Note starting adapter $adapterId ($errDetails). Continuing deployment." -ForegroundColor Yellow
     }
 }
 
