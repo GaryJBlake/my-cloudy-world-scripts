@@ -682,7 +682,7 @@ Function Add-OperationsVcenterAdapter {
         Add an adapter.
 
         .DESCRIPTION
-        The Add-OperationsAdapter cmdlet adds an adapter to VMware Aria Operations
+        The Add-OperationsAdapter cmdlet adds an adapter to VCF Operations
 
         .EXAMPLE
         Add-OperationsAdapter -json .\addAdapter.json
@@ -739,7 +739,7 @@ Function Test-OperationsVcenterAdapterConnection {
         Test adapter connection.
 
         .DESCRIPTION
-        The Test-OperationsVcenterAdapterConnection cmdlet tests the connection in VMware Aria Operations
+        The Test-OperationsVcenterAdapterConnection cmdlet tests the connection in VCF Operations
 
         .EXAMPLE
         Test-OperationsVcenterAdapterConnection -json <json>
@@ -796,7 +796,7 @@ Function Get-OperationsAdapter {
         Get list of adapters.
 
         .DESCRIPTION
-        The Get-OperationsAdapter cmdlet gets a list of adapters in VMware Aria Operations
+        The Get-OperationsAdapter cmdlet gets a list of adapters in VCF Operations
 
         .EXAMPLE
         Get-OperationsAdapter
@@ -835,11 +835,11 @@ Function Get-OperationsCredential {
         Get credentials.
 
         .DESCRIPTION
-        The Get-OperationsCredential cmdlet gets credentials from VMware Aria Operations
+        The Get-OperationsCredential cmdlet gets credentials from VCF Operations
 
         .EXAMPLE
         Get-OperationsCredential
-        This example gets all credentials from VMware Aria Operations.
+        This example gets all credentials from VCF Operations.
 
         .PARAMETER credentialId
         The ID of the credential to get.
@@ -886,7 +886,7 @@ Function Add-OperationsCredential {
         Add a credential.
 
         .DESCRIPTION
-        The Add-OperationsCredential cmdlet adds a credential to VMware Aria Operations
+        The Add-OperationsCredential cmdlet adds a credential to VCF Operations
 
         .EXAMPLE
         Add-OperationsCredential -json .\credentialJson
@@ -925,7 +925,7 @@ Function Get-OperationsCollectorGroup {
         Get list of collector groups.
 
         .DESCRIPTION
-        The Get-OperationsCollectorGroup cmdlet gets a list of collector groups in VMware Aria Operations
+        The Get-OperationsCollectorGroup cmdlet gets a list of collector groups in VCF Operations
 
         .EXAMPLE
         Get-OperationsCollectorGroup
@@ -964,7 +964,7 @@ Function Test-OperationsAdapterConnection {
         Test adapter connection.
 
         .DESCRIPTION
-        The Test-OperationsAdapterConnection cmdlet tests the connection in VMware Aria Operations
+        The Test-OperationsAdapterConnection cmdlet tests the connection in VCF Operations
 
         .EXAMPLE
         Test-OperationsAdapterConnection -json <json>
@@ -1003,7 +1003,7 @@ Function Set-OperationsAdapter {
         Update an adapter.
 
         .DESCRIPTION
-        The Set-OperationsAdapter cmdlet updates the adapters configuration in VMware Aria Operations
+        The Set-OperationsAdapter cmdlet updates the adapters configuration in VCF Operations
 
         .EXAMPLE
         Set-OperationsAdapter -json .\adapterJson
@@ -1042,7 +1042,7 @@ Function Start-OperationsAdapter {
         Starts collection of adapter.
 
         .DESCRIPTION
-        The Start-OperationsAdapter cmdlet starts the collection of an adapter in VMware Aria Operations
+        The Start-OperationsAdapter cmdlet starts the collection of an adapter in VCF Operations
 
         .EXAMPLE
         Start-OperationsAdapter -adapterId <id>
