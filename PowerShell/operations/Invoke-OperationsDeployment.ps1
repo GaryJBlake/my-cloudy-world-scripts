@@ -578,13 +578,13 @@ function Set-EulaSetting {
         }
         $jsonBody = $bodyData | ConvertTo-Json -Depth 5
 
-        if (-not $operationsHeaders.ContainsKey("X-vRealizeOps-API-use-unsupported")) {
-            $operationsHeaders.Add("X-vRealizeOps-API-use-unsupported", "true") | Out-Null
-        }
+        $internalHeaders = @{}
+        foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+        $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
 
         Invoke-RestMethod -Method POST `
             -Uri "https://${operationsAppliance}/suite-api/internal/deployment/config/properties/java_util_HashSet" `
-            -Headers $operationsHeaders `
+            -Headers $internalHeaders `
             -Body $jsonBody `
             -ContentType "application/json" `
             -SkipCertificateCheck `
@@ -594,10 +594,6 @@ function Set-EulaSetting {
 
     } catch {
         Write-Error $_.Exception.Message
-    } finally {
-        if ($operationsHeaders.ContainsKey("X-vRealizeOps-API-use-unsupported")) {
-            $operationsHeaders.Remove("X-vRealizeOps-API-use-unsupported") | Out-Null
-        }
     }
 }
 
@@ -1061,38 +1057,57 @@ Function Start-OperationsAdapter {
     )
 
     Try {
-        $internalHeaders = @{}
-        foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
-        $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
-        $internalHeaders["X-Ops-API-use-unsupported"] = "true"
-        if (-not $internalHeaders.ContainsKey("Content-Type")) {
-            $internalHeaders["Content-Type"] = "application/json"
-        }
+        Write-Host "[+] Starting collection for adapter instance: $adapterId" -ForegroundColor Cyan
 
-        # Suite API endpoints for adapter monitoring state
+        # Public Suite API calls MUST use standard operationsHeaders without unsupported internal headers!
+        $started = $false
+        
+        # 1. Standard single adapter monitoring state ON endpoint
         try {
-            # 1. Suite API bulk monitoring state endpoint
-            $uri = "https://$operationsAppliance/suite-api/api/adapters/monitoringstate/start"
-            $bulkBody = @{ adapterInstanceId = @($adapterId) } | ConvertTo-Json
-            Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $internalHeaders -Body $bulkBody -SkipCertificateCheck -ErrorAction Stop | Out-Null
+            $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/ON"
+            Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -SkipCertificateCheck -ErrorAction Stop | Out-Null
+            $started = $true
         } catch {
+            # 2. Single adapter monitoringstate/start endpoint
             try {
-                # 2. Single adapter monitoringstate/start endpoint
                 $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"
-                Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $internalHeaders -SkipCertificateCheck -ErrorAction Stop | Out-Null
+                Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -SkipCertificateCheck -ErrorAction Stop | Out-Null
+                $started = $true
             } catch {
+                # 3. Bulk monitoring state ON endpoint
                 try {
-                    # 3. Single adapter monitoringstate/ON endpoint
-                    $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/ON"
-                    Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $internalHeaders -SkipCertificateCheck -ErrorAction Stop | Out-Null
+                    $uri = "https://$operationsAppliance/suite-api/api/adapters/monitoringstate/ON"
+                    $bulkBody = @{ adapterInstanceId = @($adapterId) } | ConvertTo-Json
+                    Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $bulkBody -ContentType "application/json" -SkipCertificateCheck -ErrorAction Stop | Out-Null
+                    $started = $true
                 } catch {
-                    Write-Verbose "Adapter $adapterId monitoring state trigger skipped or already active."
+                    # 4. Bulk monitoring state start endpoint
+                    try {
+                        $uri = "https://$operationsAppliance/suite-api/api/adapters/monitoringstate/start"
+                        $bulkBody = @{ adapterInstanceId = @($adapterId) } | ConvertTo-Json
+                        Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $bulkBody -ContentType "application/json" -SkipCertificateCheck -ErrorAction Stop | Out-Null
+                        $started = $true
+                    } catch {}
                 }
             }
         }
-        Write-Host "[✓] Adapter monitoring state checked/started successfully" -ForegroundColor Green
+
+        if ($started) {
+            Write-Host "[✓] Adapter collection started successfully" -ForegroundColor Green
+        } else {
+            Write-Host "[!] Note on starting adapter $adapterId: Monitoring state request completed or already active." -ForegroundColor Yellow
+        }
     } Catch {
-        Write-Host "[!] Note on starting adapter $adapterId. Continuing deployment." -ForegroundColor Yellow
+        $errDetails = $_.Exception.Message
+        if ($_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($stream)
+                $respBody = $reader.ReadToEnd()
+                if ($respBody) { $errDetails = $respBody }
+            } catch {}
+        }
+        Write-Error "Failed to start Operations adapter ($adapterId): $errDetails"
     }
 }
 
@@ -1105,10 +1120,15 @@ function Add-VcenterAdapter {
 
     try {
         Write-Host "[+] Adding vCenter adapter for: $($fqdn)" -ForegroundColor Cyan
-        if (-Not (Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn -or $_.name -eq $fqdn })) { 
-            if (-Not (Get-OperationsCredential | Where-Object { $_.name -eq $fqdn })) {
+        $cleanFqdn = $fqdn -replace '^https?://', '' -replace '/.*$', ''
+        
+        $existingAdapters = Get-OperationsAdapter
+        $foundAdapter = $existingAdapters | Where-Object { $_.resourceKey.name -eq $cleanFqdn -or $_.name -eq $cleanFqdn -or $_.resourceKey.name -eq $fqdn -or $_.name -eq $fqdn } | Select-Object -First 1
+
+        if (-not $foundAdapter) { 
+            if (-Not (Get-OperationsCredential | Where-Object { $_.name -eq $cleanFqdn -or $_.name -eq $fqdn })) {
                 $credentialJson = '{
-                    "name": "'+ $fqdn + '",
+                    "name": "'+ $cleanFqdn + '",
                     "adapterKindKey": "VMWARE",
                     "credentialKindKey": "PRINCIPALCREDENTIAL",
                     "fields": [
@@ -1124,12 +1144,10 @@ function Add-VcenterAdapter {
             $collector = Get-OperationsCollectorGroup | Select-Object -First 1
             $collectorIdVal = if ($collector -and $collector.id) { $collector.id } elseif ($collector -and $collector.collectorGroupId) { $collector.collectorGroupId } else { $null }
 
-            $credObj = Get-OperationsCredential | Where-Object { $_.name -eq $fqdn } | Select-Object -First 1
+            $credObj = Get-OperationsCredential | Where-Object { $_.name -eq $cleanFqdn -or $_.name -eq $fqdn } | Select-Object -First 1
             if (-not $credObj) {
-                throw "Could not find credential for $fqdn in VCF Operations"
+                throw "Could not find credential for $cleanFqdn in VCF Operations"
             }
-
-            $cleanFqdn = $fqdn -replace '^https?://', '' -replace '/.*$', ''
 
             $adapterData = [ordered]@{
                 "name"               = $cleanFqdn
@@ -1140,7 +1158,7 @@ function Add-VcenterAdapter {
                 "resourceIdentifiers"= @(
                     @{ "name" = "AUTODISCOVERY"; "value" = "true" },
                     @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" },
-                    @{ "name" = "VCURL"; "value" = $cleanFqdn }
+                    @{ "name" = "VCURL"; "value" = "https://$cleanFqdn/sdk" }
                 )
                 "credential"         = @{
                     "id" = $credObj.id
@@ -1157,10 +1175,10 @@ function Add-VcenterAdapter {
             Add-OperationsVcenterAdapter -json .\addAdapter.json | Out-Null
             Test-OperationsVcenterAdapterConnection -json .\addAdapter.json | Out-Null
 
-            $finalAdapter = Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $cleanFqdn -or $_.name -eq $cleanFqdn } | Select-Object -First 1
+            $finalAdapter = Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $cleanFqdn -or $_.name -eq $cleanFqdn -or $_.resourceKey.name -eq $fqdn -or $_.name -eq $fqdn } | Select-Object -First 1
             if ($finalAdapter) {
                 Start-Sleep -Seconds 5
-                Start-OperationsAdapter -adapterId $finalAdapter.id | Out-Null
+                Start-OperationsAdapter -adapterId $finalAdapter.id
                 Write-Host "[✓] Added vCenter adapter to VCF Operations successfully" -ForegroundColor Green
             } else {
                 Write-Host "[x] Adding vCenter adapter to VCF Operations failed" -ForegroundColor Red
@@ -1169,7 +1187,8 @@ function Add-VcenterAdapter {
             if (Test-Path .\addAdapter.json) { Remove-Item .\addAdapter.json -Force -Confirm:$false }
             if (Test-Path .\createdAdapter.json) { Remove-Item .\createdAdapter.json -Force -Confirm:$false }
         } else {
-            Write-Host "[!] vCenter adapter already exists in VCF Operations" -ForegroundColor Yellow
+            Write-Host "[!] vCenter adapter already exists in VCF Operations ($cleanFqdn)" -ForegroundColor Yellow
+            Start-OperationsAdapter -adapterId $foundAdapter.id
         }
     } catch {
         Write-Error "Add-VcenterAdapter error: $_"
@@ -1181,11 +1200,13 @@ function Request-LicenseServerOTK {
     try {
         Write-Host "[+] Attempting to obtain One Time Key (OTK) for License Server registration" -ForegroundColor Cyan
 
-        $operationsHeaders.Add("X-vRealizeOps-API-use-unsupported", "true") | Out-Null
+        $internalHeaders = @{}
+        foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+        $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
 
         $Script:licenseServerOTK = Invoke-RestMethod -Method GET `
             -Uri "https://${operationsAppliance}/suite-api/internal/extension/vcf-license-cloud-integration/license-servers/otk" `
-            -Headers $operationsHeaders `
+            -Headers $internalHeaders `
             -SkipCertificateCheck
 
         if ($licenseServerOTK) {
@@ -1195,10 +1216,6 @@ function Request-LicenseServerOTK {
         }
     } catch {
 
-    } finally {
-        if ($operationsHeaders.ContainsKey("X-Ops-API-use-unsupported")) {
-            $operationsHeaders.Remove("X-Ops-API-use-unsupported") | Out-Null
-        }
     }
 }
 
@@ -1308,11 +1325,13 @@ function Get-RegistrationFile {
     try {
         Write-Host "[+] Attempting to download VCF Operations registration file for offline licensing..." -ForegroundColor Cyan
 
-        $operationsHeaders.Add("X-Ops-API-use-unsupported", "true") | Out-Null
+        $internalHeaders = @{}
+        foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+        $internalHeaders["X-Ops-API-use-unsupported"] = "true"
 
         $requestResults = Invoke-RestMethod -Method POST `
                 -Uri "https://${operationsAppliance}/suite-api/internal/extension/vcf-license-cloud-integration/registration/offline/request" `
-                -Headers $operationsHeaders `
+                -Headers $internalHeaders `
                 -SkipCertificateCheck
 
         # Extract properties directly from the response object
@@ -1327,10 +1346,6 @@ function Get-RegistrationFile {
         Write-Host "[✓] Downloaded the registration file successfully" -ForegroundColor Green
     } catch {
 
-    } finally {
-        if ($operationsHeaders.ContainsKey("X-Ops-API-use-unsupported")) {
-            $operationsHeaders.Remove("X-Ops-API-use-unsupported") | Out-Null
-        }
     }
 }
 
@@ -1379,8 +1394,13 @@ function Import-VerificationFile {
 
             Write-Host "[+] Uploading licensing verification file to VCF Operations..."
 
-            $operationsHeaders.Remove("Content-Type") | Out-Null
-            $operationsHeaders.Add("X-Ops-API-use-unsupported", "true") | Out-Null
+            $internalHeaders = @{}
+            foreach ($k in $operationsHeaders.Keys) {
+                if ($k -ne "Content-Type") {
+                    $internalHeaders[$k] = $operationsHeaders[$k]
+                }
+            }
+            $internalHeaders["X-Ops-API-use-unsupported"] = "true"
 
             # Build the multipart form payload matching the curl '-F verification=@...' parameter
             $uploadForm = @{
@@ -1390,7 +1410,7 @@ function Import-VerificationFile {
             # Execute the request
             $response = Invoke-RestMethod -Method POST `
                 -Uri "https://${operationsAppliance}/suite-api/internal/license-manager/license-servers/verification?_no_links=true" `
-                -Headers $operationsHeaders `
+                -Headers $internalHeaders `
                 -Form $uploadForm `
                 -SkipCertificateCheck
 
@@ -1398,14 +1418,6 @@ function Import-VerificationFile {
         }
     } catch {
         Write-Error $_.Exception.Message
-    } finally {
-        if ($operationsHeaders.ContainsKey("X-Ops-API-use-unsupported")) {
-            $operationsHeaders.Remove("X-Ops-API-use-unsupported") | Out-Null
-        }
-        
-        if ($null -ne $originalContentType) {
-            $operationsHeaders["Content-Type"] = $originalContentType | Out-Null
-        }
     }
 }
 
@@ -1413,12 +1425,14 @@ function Get-ConfirmationFile {
     try {
         Write-Host "[+] Requesting confirmation file from VCF Operations..."
 
-        $operationsHeaders.Add("X-Ops-API-use-unsupported", "true") | Out-Null
+        $internalHeaders = @{}
+        foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+        $internalHeaders["X-Ops-API-use-unsupported"] = "true"
 
         # Execute the GET request to retrieve the data
         $response = Invoke-RestMethod -Method GET `
             -Uri "https://${operationsAppliance}/suite-api/internal/license-manager/registration/request" `
-            -Headers $operationsHeaders `
+            -Headers $internalHeaders `
             -SkipCertificateCheck
 
         $confirmationData     = $response.jwsEncodedData
@@ -1444,10 +1458,6 @@ function Get-ConfirmationFile {
 
     } catch {
         Write-Error $_.Exception.Message
-    }  finally {
-        if ($operationsHeaders.ContainsKey("X-Ops-API-use-unsupported")) {
-            $operationsHeaders.Remove("X-Ops-API-use-unsupported") | Out-Null
-        }
     }
 }
 
@@ -1462,7 +1472,9 @@ function Import-LicenseFile {
         } else {
             Write-Host "[+] Attempting to upload the license file to VCF Operations ..."
 
-            $operationsHeaders.Add("X-Ops-API-use-unsupported", "true") | Out-Null
+            $internalHeaders = @{}
+            foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+            $internalHeaders["X-Ops-API-use-unsupported"] = "true"
 
             # Prepare the multipart form data payload using Get-Item
             $uploadForm = @{
@@ -1472,7 +1484,7 @@ function Import-LicenseFile {
             # Upload the file
             $uploadResults = Invoke-RestMethod -Method POST `
                 -Uri "https://${operationsAppliance}/suite-api/internal/extension/vcf-license-cloud-integration/registration/offline/response" `
-                -Headers $operationsHeaders `
+                -Headers $internalHeaders `
                 -Form $uploadForm `
                 -SkipCertificateCheck
 
@@ -1480,10 +1492,6 @@ function Import-LicenseFile {
         }
     } catch {
         Write-Error $_.Exception.Message
-    } finally {
-        if ($operationsHeaders.ContainsKey("X-Ops-API-use-unsupported")) {
-            $operationsHeaders.Remove("X-Ops-API-use-unsupported") | Out-Null
-        }
     }
 }
 
@@ -1507,7 +1515,9 @@ function Import-PublicPrivateKey {
             Get-Content -Path $PublicKeyFile | Add-Content -Path $keypairFile.FullName
             
             try {
-                $operationsHeaders.Add("X-Ops-API-use-unsupported", "true") | Out-Null
+                $internalHeaders = @{}
+                foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+                $internalHeaders["X-Ops-API-use-unsupported"] = "true"
 
                 Write-Host "[+] Attempting to upload key pair for $Hostname..." -ForegroundColor Cyan
 
@@ -1518,7 +1528,7 @@ function Import-PublicPrivateKey {
 
                 $uploadResponse = Invoke-RestMethod -Method Post `
                     -Uri "https://$operationsAppliance/suite-api/internal/extension/vcf-license-cloud-integration/identity/keypair" `
-                    -Headers $operationsHeaders `
+                    -Headers $internalHeaders `
                     -Form $form `
                     -SkipCertificateCheck
 
@@ -1537,9 +1547,6 @@ function Import-PublicPrivateKey {
                 # Clean up temporary file
                 if (Test-Path -Path $keypairFile.FullName) {
                     Remove-Item -Path $keypairFile.FullName -Force
-                }
-                if ($operationsHeaders.ContainsKey("X-Ops-API-use-unsupported")) {
-                    $operationsHeaders.Remove("X-Ops-API-use-unsupported") | Out-Null
                 }
             }
         } else {
