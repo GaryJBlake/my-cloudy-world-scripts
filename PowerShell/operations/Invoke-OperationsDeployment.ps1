@@ -529,7 +529,7 @@ function Initialize-Operations {
 
                 # Check if target state reached
                 if ($currentState -eq $targetState -or $currentState -eq "ONLINE" -or $onlineState -eq "ONLINE" -or $currentState -eq "RUNNING") {
-                    Write-Host "`n[✓] Cluster initialization complete! Final state: $currentState" -ForegroundColor Green
+                    Write-Host "[✓] Cluster initialization complete! Final state: $currentState" -ForegroundColor Green
                     return $true
                 }
 
