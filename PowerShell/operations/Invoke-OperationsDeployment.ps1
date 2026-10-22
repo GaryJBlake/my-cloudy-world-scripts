@@ -686,14 +686,29 @@ Function Add-OperationsVcenterAdapter {
             if (!(Test-Path $json)) {
                 Throw "JSON File Not Found"
             } else {
-                $body = (Get-Content $json) # Read the json file contents into the $body variable
+                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
             }
         }
+
+        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
+            $operationsHeaders.Add("Content-Type", "application/json")
+        }
+
+        # Suite API vCenter Integrations Endpoint (VCF 9.1)
         $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters"
         $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
         $response
     } Catch {
-        Write-Error $_.Exception.Message
+        $errDetails = $_.Exception.Message
+        if ($_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($stream)
+                $respBody = $reader.ReadToEnd()
+                if ($respBody) { $errDetails = $respBody }
+            } catch {}
+        }
+        Write-Error "Failed to add Operations vCenter adapter: $errDetails"
     }
 }
 
@@ -723,15 +738,29 @@ Function Test-OperationsVcenterAdapterConnection {
             if (!(Test-Path $json)) {
                 Throw "JSON File Not Found"
             } else {
-                $body = (Get-Content $json) # Read the json file contents into the $body variable
+                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
             }
         }
 
+        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
+            $operationsHeaders.Add("Content-Type", "application/json")
+        }
+
+        # Suite API vCenter Integrations Test Connection Endpoint (VCF 9.1)
         $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters/testConnection"
         $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
         $response
     } Catch {
-        Write-Error $_.Exception.Message
+        $errDetails = $_.Exception.Message
+        if ($_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($stream)
+                $respBody = $reader.ReadToEnd()
+                if ($respBody) { $errDetails = $respBody }
+            } catch {}
+        }
+        Write-Error "Failed to test Operations vCenter adapter connection: $errDetails"
     }
 }
 
@@ -850,8 +879,11 @@ Function Add-OperationsCredential {
             if (!(Test-Path $json)) {
                 Throw "JSON File Not Found"
             } else {
-                $body = (Get-Content $json) # Read the json file contents into the $body variable
+                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
             }
+        }
+        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
+            $operationsHeaders.Add("Content-Type", "application/json")
         }
         $uri = "https://$operationsAppliance/suite-api/api/credentials"
         $response = Invoke-RestMethod -Method 'POST' -Uri $Uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
@@ -934,8 +966,11 @@ Function Test-OperationsAdapterConnection {
             if (!(Test-Path $json)) {
                 Throw "JSON File Not Found"
             } else {
-                $body = (Get-Content $json) # Read the json file contents into the $body variable
+                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
             }
+        }
+        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
+            $operationsHeaders.Add("Content-Type", "application/json")
         }
         if ($PsBoundParameters.ContainsKey("patch")) {
             $uri = "https://$operationsAppliance/suite-api/api/adapters/testConnection"
@@ -979,8 +1014,11 @@ Function Set-OperationsAdapter {
             if (!(Test-Path $json)) {
                 Throw "JSON File Not Found"
             } else {
-                $body = (Get-Content $json) # Read the json file contents into the $body variable
+                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
             }
+        }
+        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
+            $operationsHeaders.Add("Content-Type", "application/json")
         }
         if ($PsBoundParameters.ContainsKey("patch")) {
             $uri = "https://$operationsAppliance/suite-api/api/adapters"
@@ -1042,32 +1080,38 @@ function Add-VcenterAdapter {
                             { "name": "USER", "value": "'+ $username + '" },
                             { "name": "PASSWORD", "value": "'+ $password + '" }
                     ]}'
-                    $credentialJson | Out-File .\addCredential.json
+                    Set-Content -Path .\addCredential.json -Value $credentialJson -Encoding UTF8
                     Add-OperationsCredential -json .\addCredential.json | Out-Null
                     Remove-Item .\addCredential.json -Force -Confirm:$false
                 }
+
+                $vcUrlVal = if ($fqdn -like "https://*") { $fqdn } else { "https://$fqdn/sdk" }
+                $collector = Get-OperationsCollectorGroup | Select-Object -First 1
+                $collectorIdVal = if ($collector) { $collector.collectorId } else { "1" }
+                $credObj = Get-OperationsCredential | Where-Object { $_.name -eq $fqdn } | Select-Object -First 1
+
                 $adapterJson = '{
                     "name": "'+ $fqdn + '",
                     "description": "vCenter Adapter - '+ $fqdn + '",
                     "adapterKindKey": "VMWARE",
                     "resourceKindKey" : "VMwareAdapter Instance",
                     "monitoringInterval": 5,
-                    "collectorId": "'+ (Get-OperationsCollectorGroup).collectorId + '",
+                    "collectorId": "'+ $collectorIdVal + '",
                     "resourceIdentifiers": [
                         { "name": "AUTODISCOVERY", "value": "true" },
                         { "name": "PROCESSCHANGEEVENTS", "value": "true" },
-                        { "name": "VCURL", "value": "'+ $fqdn + '" }
+                        { "name": "VCURL", "value": "'+ $vcUrlVal + '" }
                     ],
                     "credential": {
-                        "id": "'+ (Get-OperationsCredential | Where-Object { $_.name -eq $fqdn }).id + '"
+                        "id": "'+ $credObj.id + '"
                         }
                 }'
 
-                $adapterJson | Out-File .\addAdapter.json
+                Set-Content -Path .\addAdapter.json -Value $adapterJson -Encoding UTF8
                 Add-OperationsVcenterAdapter -json .\addAdapter.json | Out-Null
                 $testAdapter = Test-OperationsVcenterAdapterConnection -json .\addAdapter.json
                 $testAdapter.id = (Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn }).id
-                $testAdapter | ConvertTo-Json -Depth 10 | Out-File .\createdAdapter.json
+                $testAdapter | ConvertTo-Json -Depth 10 | Set-Content -Path .\createdAdapter.json -Encoding UTF8
                 Test-OperationsAdapterConnection -json .\createdAdapter.json -patch | Out-Null
                 Set-OperationsAdapter -json .\createdAdapter.json -patch | Out-Null
                 if (Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $fqdn }) {
