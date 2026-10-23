@@ -1045,22 +1045,23 @@ Function Set-OperationsAdapter {
             $operationsHeaders.Add("Content-Type", "application/json")
         }
 
-        # List of candidate payload variations (raw body, unwrapped body, wrapped body)
-        $bodiesToTry = @($body)
+        # List of candidate payload variations (array wrapped, raw body, unwrapped body)
+        $bodiesToTry = @()
         if ($parsed) {
+            if (-not $parsed.adapterInstanceInfoDto) {
+                $bodiesToTry += (@{ adapterInstanceInfoDto = @($parsed) } | ConvertTo-Json -Depth 10)
+                $bodiesToTry += (@{ adapterInstanceInfoDto = $parsed } | ConvertTo-Json -Depth 10)
+            } else {
+                $bodiesToTry += ($parsed | ConvertTo-Json -Depth 10)
+            }
             if ($parsed.adapterInstanceInfoDto) {
                 $bodiesToTry += ($parsed.adapterInstanceInfoDto | ConvertTo-Json -Depth 10)
             }
             if ($parsed.adapterInstance) {
                 $bodiesToTry += ($parsed.adapterInstance | ConvertTo-Json -Depth 10)
             }
-            if (-not $parsed.adapterInstanceInfoDto -and -not $parsed.adapterInstance) {
-                $wrapped = @{ adapterInstanceInfoDto = $parsed } | ConvertTo-Json -Depth 10
-                $bodiesToTry += $wrapped
-                $arrayWrapped = @{ adapterInstanceInfoDto = @($parsed) } | ConvertTo-Json -Depth 10
-                $bodiesToTry += $arrayWrapped
-            }
         }
+        $bodiesToTry += $body
 
         $attempts = @()
 
@@ -1099,9 +1100,9 @@ Function Set-OperationsAdapter {
             }
         }
 
-        Write-Warning "[!] Set-OperationsAdapter candidate endpoints returned errors:`n$($attempts -join "`n")"
+        Write-Verbose "[!] Set-OperationsAdapter candidate endpoint attempts:`n$($attempts -join "`n")"
     } Catch {
-        Write-Warning "[!] Set-OperationsAdapter warning: $($_.Exception.Message)"
+        Write-Verbose "[!] Set-OperationsAdapter warning: $($_.Exception.Message)"
     }
 }
 
