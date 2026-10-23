@@ -1046,19 +1046,19 @@ Function Set-OperationsAdapter {
         $attempts = @()
 
         # List of candidate endpoints for updating an adapter
-        $endpoints = @()
+        $endpoints = @(
+            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" },
+            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters" },
+            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" },
+            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/adapters" }
+        )
         if (-not [string]::IsNullOrWhiteSpace($adapterId)) {
             $endpoints += @(
                 @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId" },
+                @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters/$adapterId" },
                 @{ Method = 'PATCH'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId" }
             )
         }
-        $endpoints += @(
-            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters" },
-            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" },
-            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/adapters" },
-            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" }
-        )
 
         foreach ($ep in $endpoints) {
             try {
@@ -1292,24 +1292,53 @@ function Add-VcenterAdapter {
             if (Test-Path .\testAdapter.json) { Remove-Item .\testAdapter.json -Force -Confirm:$false }
 
             if ($testResult) {
-                # Extract the adapter instance object if wrapped in testResult
-                $adapterToUpdate = if ($testResult.adapterInstance) { $testResult.adapterInstance } else { $testResult }
+                # Construct a complete adapter instance payload by keeping all mandatory adapter fields
+                # ($testAdapterData) and attaching certificate details from $testResult
+                $adapterToUpdate = [ordered]@{
+                    "id"                 = $finalAdapter.id
+                    "name"               = $cleanFqdn
+                    "adapterKindKey"     = "VMWARE"
+                    "resourceKindKey"    = "VMwareAdapter Instance"
+                    "monitoringInterval" = 5
+                    "resourceIdentifiers"= @(
+                        @{ "name" = "AUTODISCOVERY"; "value" = "true" },
+                        @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" },
+                        @{ "name" = "VCURL"; "value" = "https://$cleanFqdn/sdk" }
+                    )
+                    "credential"         = @{
+                        "id" = $credObj.id
+                    }
+                }
+                if ($collectorIdVal) { $adapterToUpdate["collectorId"] = $collectorIdVal }
 
-                # Ensure the created adapter ID is attached to the adapter object
-                if (-not $adapterToUpdate.id) {
-                    if ($testResult.id) {
-                        $adapterToUpdate | Add-Member -MemberType NoteProperty -Name "id" -Value $testResult.id -Force
-                    } else {
-                        $adapterToUpdate | Add-Member -MemberType NoteProperty -Name "id" -Value $finalAdapter.id -Force
+                # If testResult contains an embedded adapterInstance object, merge any extra properties
+                if ($testResult.adapterInstance) {
+                    foreach ($prop in $testResult.adapterInstance.PSObject.Properties) {
+                        if ($prop.Value -and -not $adapterToUpdate.Contains($prop.Name)) {
+                            $adapterToUpdate[$prop.Name] = $prop.Value
+                        }
                     }
                 }
 
-                # If testResult contains certificateInformation at root, attach it
-                if ($testResult.certificateInformation -and -not $adapterToUpdate.certificateInformation) {
-                    $adapterToUpdate | Add-Member -MemberType NoteProperty -Name "certificateInformation" -Value $testResult.certificateInformation -Force
+                # Extract certificateInformation from testResult
+                $certInfo = $null
+                if ($testResult.certificateInformation) {
+                    $certInfo = $testResult.certificateInformation
+                } elseif ($testResult.adapterInstance -and $testResult.adapterInstance.certificateInformation) {
+                    $certInfo = $testResult.adapterInstance.certificateInformation
+                } elseif ($testResult.certificate) {
+                    $certInfo = $testResult.certificate
+                } elseif ($testResult -is [PSCustomObject] -or $testResult -is [System.Collections.IDictionary]) {
+                    if ($testResult.thumbprint -or $testResult.sha1Fingerprint -or $testResult.subject) {
+                        $certInfo = $testResult
+                    }
                 }
 
-                # Save the test connection result (which includes the vCenter certificate payload) and update the adapter
+                if ($certInfo) {
+                    $adapterToUpdate["certificateInformation"] = $certInfo
+                }
+
+                # Save the complete adapter instance object (including trusted vCenter certificate) and update the adapter
                 $createdJson = $adapterToUpdate | ConvertTo-Json -Depth 10
                 Set-Content -Path .\createdAdapter.json -Value $createdJson -Encoding UTF8
                 
@@ -1317,14 +1346,10 @@ function Add-VcenterAdapter {
                 try {
                     Set-OperationsAdapter -json .\createdAdapter.json -adapterId $finalAdapter.id | Out-Null
                 } catch {
-                    if ($testResult.adapterInstance) {
-                        Write-Host "[!] Retrying adapter configuration update with full test connection result object..." -ForegroundColor Yellow
-                        $fullTestJson = $testResult | ConvertTo-Json -Depth 10
-                        Set-Content -Path .\createdAdapter.json -Value $fullTestJson -Encoding UTF8
-                        Set-OperationsAdapter -json .\createdAdapter.json -adapterId $finalAdapter.id | Out-Null
-                    } else {
-                        Write-Error $_
-                    }
+                    Write-Host "[!] Retrying adapter configuration update with direct test result..." -ForegroundColor Yellow
+                    $fullTestJson = $testResult | ConvertTo-Json -Depth 10
+                    Set-Content -Path .\createdAdapter.json -Value $fullTestJson -Encoding UTF8
+                    Set-OperationsAdapter -json .\createdAdapter.json -adapterId $finalAdapter.id | Out-Null
                 }
                 
                 if (Test-Path .\createdAdapter.json) { Remove-Item .\createdAdapter.json -Force -Confirm:$false }
