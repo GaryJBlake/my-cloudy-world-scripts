@@ -906,11 +906,7 @@ function Add-VcenterAdapter {
 
     $cleanVcFqdn = $VcenterFqdn -replace '^https?://', '' -replace '/.*$', ''
 
-    Write-Host "================================================================================" -ForegroundColor Green
-    Write-Host "Starting Pure REST API VCF Operations Cloud Account Workflow" -ForegroundColor Green
-    Write-Host "VCF Operations Appliance : $VcfOpsFqdn" -ForegroundColor Green
-    Write-Host "Target vCenter           : $cleanVcFqdn" -ForegroundColor Green
-    Write-Host "================================================================================" -ForegroundColor Green
+    Write-Host "[+] Starting VCF Operations Cloud Account Workflow..." -ForegroundColor Cyan
 
     # 1. Acquire Ops Token
     $opsToken = Request-OperationsToken -Fqdn $VcfOpsFqdn -Username $Username -Password $Password
@@ -983,16 +979,7 @@ function Add-VcenterAdapter {
     $started = Start-OperationsAdapterCollection -Fqdn $VcfOpsFqdn -Headers $apiHeaders -AdapterInstanceIds $adapterIdsToStart
     if (-not $started) { throw "One or more adapters could not be started; see errors above." }
 
-    Write-Host "`n================================================================================" -ForegroundColor Green
-    Write-Host "✅ Pure API Workflow Completed Successfully for $cleanVcFqdn" -ForegroundColor Green
-    Write-Host "================================================================================" -ForegroundColor Green
-
-    return [PSCustomObject]@{
-        AdapterID    = $adapterId
-        CredentialID = $credentialId
-        CollectorID  = $CollectorGroupId
-    }
-
+    Write-Host "[✓] VCF Operations Cloud Account Workflow Completed Successfully for $cleanVcFqdn" -ForegroundColor Green
 }
 
 function Request-LicenseServerOTK {
