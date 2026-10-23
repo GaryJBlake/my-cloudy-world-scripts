@@ -1036,6 +1036,8 @@ Function Set-OperationsAdapter {
             $parsed = $body | ConvertFrom-Json
             if ([string]::IsNullOrWhiteSpace($adapterId)) {
                 if ($parsed.id) { $adapterId = $parsed.id }
+                elseif ($parsed.adapterInstancesInfoDto.id) { $adapterId = $parsed.adapterInstancesInfoDto.id }
+                elseif ($parsed.adapterInstancesInfoDto -is [array] -and $parsed.adapterInstancesInfoDto[0].id) { $adapterId = $parsed.adapterInstancesInfoDto[0].id }
                 elseif ($parsed.adapterInstanceInfoDto.id) { $adapterId = $parsed.adapterInstanceInfoDto.id }
                 elseif ($parsed.adapterInstance.id) { $adapterId = $parsed.adapterInstance.id }
             }
@@ -1045,17 +1047,19 @@ Function Set-OperationsAdapter {
             $operationsHeaders.Add("Content-Type", "application/json")
         }
 
-        # List of candidate payload variations (array wrapped, raw body, unwrapped body)
+        # List of candidate payload variations (plural adapterInstancesInfoDto first as expected by vROps API)
         $bodiesToTry = @()
         if ($parsed) {
-            if (-not $parsed.adapterInstanceInfoDto) {
-                $bodiesToTry += (@{ adapterInstanceInfoDto = @($parsed) } | ConvertTo-Json -Depth 10)
-                $bodiesToTry += (@{ adapterInstanceInfoDto = $parsed } | ConvertTo-Json -Depth 10)
-            } else {
+            if ($parsed.adapterInstancesInfoDto) {
                 $bodiesToTry += ($parsed | ConvertTo-Json -Depth 10)
-            }
-            if ($parsed.adapterInstanceInfoDto) {
-                $bodiesToTry += ($parsed.adapterInstanceInfoDto | ConvertTo-Json -Depth 10)
+            } elseif ($parsed.adapterInstanceInfoDto) {
+                $unwrapped = $parsed.adapterInstanceInfoDto
+                $bodiesToTry += (@{ adapterInstancesInfoDto = @($unwrapped) } | ConvertTo-Json -Depth 10)
+                $bodiesToTry += ($parsed | ConvertTo-Json -Depth 10)
+            } else {
+                $bodiesToTry += (@{ adapterInstancesInfoDto = @($parsed) } | ConvertTo-Json -Depth 10)
+                $bodiesToTry += (@{ adapterInstancesInfoDto = $parsed } | ConvertTo-Json -Depth 10)
+                $bodiesToTry += (@{ "adapter-instances-info" = @($parsed) } | ConvertTo-Json -Depth 10)
             }
             if ($parsed.adapterInstance) {
                 $bodiesToTry += ($parsed.adapterInstance | ConvertTo-Json -Depth 10)
@@ -1147,11 +1151,29 @@ Function Start-OperationsAdapterCollection {
                     $Global:operationsHeaders.Add("Content-Type", "application/json")
                 }
 
+                # Helper to safely extract adapter DTO object from API response
+                $extractDto = {
+                    param($obj)
+                    if (-not $obj) { return $null }
+                    if ($obj.adapterInstancesInfoDto) {
+                        if ($obj.adapterInstancesInfoDto -is [array]) { return $obj.adapterInstancesInfoDto[0] }
+                        return $obj.adapterInstancesInfoDto
+                    }
+                    if ($obj.adapterInstanceInfoDto) {
+                        if ($obj.adapterInstanceInfoDto -is [array]) { return $obj.adapterInstanceInfoDto[0] }
+                        return $obj.adapterInstanceInfoDto
+                    }
+                    if ($obj.adapterInstanceHeaderDto) {
+                        return $obj.adapterInstanceHeaderDto
+                    }
+                    return $obj
+                }
+
                 # 1. Check if adapter monitoring state is already active
                 try {
                     $existing = Get-OperationsAdapter -id $id
-                    if ($existing) {
-                        $dto = if ($existing.adapterInstanceInfoDto) { $existing.adapterInstanceInfoDto } else { $existing }
+                    $dto = &$extractDto $existing
+                    if ($dto -and $dto.monitoringState) {
                         $currentState = $dto.monitoringState
                         if ($currentState -eq "ON" -or $currentState -eq "STARTED" -or $currentState -eq "COLLECTING") {
                             Write-Host "[✓] Adapter collection is active (monitoringState: $currentState) for ID: $id" -ForegroundColor Green
@@ -1171,20 +1193,33 @@ Function Start-OperationsAdapterCollection {
 
                 # Candidate REST endpoints & payloads for starting adapter / resource monitoring state
                 $endpoints = @(
-                    # 1. Standard Suite API Resources Endpoint (Resource monitoring state ON)
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate/STARTED"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate"; Headers = $Global:operationsHeaders; Body = (@{ "resource-monitoring-state" = @( @{ resourceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
-                    
-                    # 2. Standard Suite API Adapters Endpoint (Hyphenated JAXB DTO)
+                    # 1. Official vROps Adapter Monitoring State Endpoints with string array body
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/on"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/on"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
+
+                    # 2. Adapter Monitoring State with object body
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
+
+                    # 3. Standard Suite API Adapters Endpoint (Plural & Hyphenated JAXB DTO)
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Headers = $Global:operationsHeaders; Body = (@{ "adapterInstancesInfoDto" = @( @{ id = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
                     @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Headers = $Global:operationsHeaders; Body = (@{ "adapter-monitoring-state" = @( @{ adapterInstanceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
                     @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Headers = $Global:operationsHeaders; Body = (@{ "adapter-monitoring-state" = @( @{ adapterInstanceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
 
-                    # 3. Direct Resource ID Endpoints
+                    # 4. Standard Suite API Resources Endpoint (Resource monitoring state ON)
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate/STARTED"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate"; Headers = $Global:operationsHeaders; Body = (@{ "resource-monitoring-state" = @( @{ resourceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
+
+                    # 5. Direct Resource ID & Integrations Endpoints
                     @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/${id}/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = $null },
                     @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/${id}/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = $null },
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/start"; Headers = $Global:operationsHeaders; Body = $null },
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/collect"; Headers = $Global:operationsHeaders; Body = $null },
 
-                    # 4. Internal Suite API Endpoints (with unsupported headers)
+                    # 6. Internal Suite API Endpoints (with unsupported headers)
                     @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/resources/monitoringstate/ON"; Headers = $internalHeaders; Body = (@($id) | ConvertTo-Json) },
                     @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/monitoringstate"; Headers = $internalHeaders; Body = (@{ "adapter-monitoring-state" = @( @{ adapterInstanceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
                     @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/monitoringstate/ON"; Headers = $internalHeaders; Body = $null },
@@ -1234,13 +1269,35 @@ Function Start-OperationsAdapterCollection {
                     } catch {}
                 }
 
+                # Direct Adapter Object Update Fallback: Force monitoringState = "ON" via Set-OperationsAdapter
+                if (-not $started) {
+                    try {
+                        $adapterObj = Get-OperationsAdapter -id $id
+                        $dtoToUpdate = &$extractDto $adapterObj
+                        if ($dtoToUpdate) {
+                            if ($dtoToUpdate -is [PSCustomObject]) {
+                                if ($dtoToUpdate.PSObject.Properties['monitoringState']) { $dtoToUpdate.monitoringState = "ON" }
+                                else { $dtoToUpdate | Add-Member -MemberType NoteProperty -Name "monitoringState" -Value "ON" -Force }
+                            } elseif ($dtoToUpdate -is [System.Collections.IDictionary]) {
+                                $dtoToUpdate["monitoringState"] = "ON"
+                            }
+
+                            $updatePayload = @{ adapterInstancesInfoDto = @($dtoToUpdate) } | ConvertTo-Json -Depth 10
+                            Set-Content -Path .\startAdapterTmp.json -Value $updatePayload -Encoding UTF8
+                            Set-OperationsAdapter -json .\startAdapterTmp.json -adapterId $id | Out-Null
+                            if (Test-Path .\startAdapterTmp.json) { Remove-Item .\startAdapterTmp.json -Force -Confirm:$false }
+                            $started = $true
+                        }
+                    } catch {}
+                }
+
                 # Verify collection status
                 Start-Sleep -Seconds 2
                 try {
                     $verifyAdapter = Get-OperationsAdapter -id $id
-                    if ($verifyAdapter) {
-                        $dto = if ($verifyAdapter.adapterInstanceInfoDto) { $verifyAdapter.adapterInstanceInfoDto } else { $verifyAdapter }
-                        $finalState = $dto.monitoringState
+                    $dtoVerify = &$extractDto $verifyAdapter
+                    if ($dtoVerify -and $dtoVerify.monitoringState) {
+                        $finalState = $dtoVerify.monitoringState
                         if ($finalState -eq "ON" -or $finalState -eq "STARTED" -or $finalState -eq "COLLECTING") {
                             $started = $true
                         }
