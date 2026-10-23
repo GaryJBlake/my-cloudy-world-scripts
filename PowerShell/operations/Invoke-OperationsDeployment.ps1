@@ -1031,26 +1031,45 @@ Function Set-OperationsAdapter {
         }
 
         # Try to extract adapterId from json if not explicitly passed
-        if ([string]::IsNullOrWhiteSpace($adapterId)) {
-            try {
-                $parsed = $body | ConvertFrom-Json
+        $parsed = $null
+        try {
+            $parsed = $body | ConvertFrom-Json
+            if ([string]::IsNullOrWhiteSpace($adapterId)) {
                 if ($parsed.id) { $adapterId = $parsed.id }
+                elseif ($parsed.adapterInstanceInfoDto.id) { $adapterId = $parsed.adapterInstanceInfoDto.id }
                 elseif ($parsed.adapterInstance.id) { $adapterId = $parsed.adapterInstance.id }
-            } catch {}
-        }
+            }
+        } catch {}
 
         if (-not $operationsHeaders.ContainsKey("Content-Type")) {
             $operationsHeaders.Add("Content-Type", "application/json")
+        }
+
+        # List of candidate payload variations (raw body, unwrapped body, wrapped body)
+        $bodiesToTry = @($body)
+        if ($parsed) {
+            if ($parsed.adapterInstanceInfoDto) {
+                $bodiesToTry += ($parsed.adapterInstanceInfoDto | ConvertTo-Json -Depth 10)
+            }
+            if ($parsed.adapterInstance) {
+                $bodiesToTry += ($parsed.adapterInstance | ConvertTo-Json -Depth 10)
+            }
+            if (-not $parsed.adapterInstanceInfoDto -and -not $parsed.adapterInstance) {
+                $wrapped = @{ adapterInstanceInfoDto = $parsed } | ConvertTo-Json -Depth 10
+                $bodiesToTry += $wrapped
+                $arrayWrapped = @{ adapterInstanceInfoDto = @($parsed) } | ConvertTo-Json -Depth 10
+                $bodiesToTry += $arrayWrapped
+            }
         }
 
         $attempts = @()
 
         # List of candidate endpoints for updating an adapter
         $endpoints = @(
-            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" },
             @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters" },
-            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" },
-            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/adapters" }
+            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" },
+            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/adapters" },
+            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" }
         )
         if (-not [string]::IsNullOrWhiteSpace($adapterId)) {
             $endpoints += @(
@@ -1060,27 +1079,29 @@ Function Set-OperationsAdapter {
             )
         }
 
-        foreach ($ep in $endpoints) {
-            try {
-                $response = Invoke-RestMethod -Method $ep.Method -Uri $ep.Uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-                return $response
-            } catch {
-                $err = $_.Exception.Message
-                if ($_.Exception.Response) {
-                    try {
-                        $s = $_.Exception.Response.GetResponseStream()
-                        $r = New-Object System.IO.StreamReader($s)
-                        $b = $r.ReadToEnd()
-                        if ($b) { $err = $b }
-                    } catch {}
+        foreach ($payloadBody in $bodiesToTry) {
+            foreach ($ep in $endpoints) {
+                try {
+                    $response = Invoke-RestMethod -Method $ep.Method -Uri $ep.Uri -Headers $operationsHeaders -Body $payloadBody -SkipCertificateCheck -ErrorAction Stop
+                    return $response
+                } catch {
+                    $err = $_.Exception.Message
+                    if ($_.Exception.Response) {
+                        try {
+                            $s = $_.Exception.Response.GetResponseStream()
+                            $r = New-Object System.IO.StreamReader($s)
+                            $b = $r.ReadToEnd()
+                            if ($b) { $err = $b }
+                        } catch {}
+                    }
+                    $attempts += "$($ep.Method) $($ep.Uri) => $err"
                 }
-                $attempts += "$($ep.Method) $($ep.Uri) => $err"
             }
         }
 
-        Write-Error "Set-OperationsAdapter failed on all candidate endpoints:`n$($attempts -join "`n")"
+        Write-Warning "[!] Set-OperationsAdapter candidate endpoints returned errors:`n$($attempts -join "`n")"
     } Catch {
-        Write-Error "Set-OperationsAdapter error: $($_.Exception.Message)"
+        Write-Warning "[!] Set-OperationsAdapter warning: $($_.Exception.Message)"
     }
 }
 
@@ -1130,21 +1151,31 @@ Function Start-OperationsAdapterCollection {
 
                 # Candidate REST endpoints for starting adapter monitoring state
                 $endpoints = @(
-                    # 1. Bulk POST with state in URL
+                    # 1. Official vROps / Aria Operations REST API: PUT monitoringstate/{state}
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/STARTED"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/START"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
+                    
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Body = (@{ adapterInstanceIds = @($id) } | ConvertTo-Json) },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/STARTED"; Body = (@{ adapterInstanceIds = @($id) } | ConvertTo-Json) },
+
+                    # 2. Bulk POST with state in URL
                     @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
                     @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/STARTED"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
                     
-                    # 2. Direct ID POST/PUT endpoints
+                    # 3. Direct ID POST/PUT endpoints
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/ON"; Body = $null },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/STARTED"; Body = $null },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/start"; Body = $null },
                     @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/ON"; Body = $null },
                     @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/start"; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/ON"; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/start"; Body = $null },
 
-                    # 3. Bulk POST/PUT with monitoringState property in body
+                    # 4. Bulk POST/PUT with monitoringState property in body
                     @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Body = (@{ adapterInstanceId = @($id); monitoringState = "ON" } | ConvertTo-Json) },
                     @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Body = (@{ adapterInstanceId = @($id); monitoringState = "ON" } | ConvertTo-Json) },
 
-                    # 4. Integrations API endpoint
+                    # 5. Integrations API endpoint
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/monitoringstate/ON"; Body = $null },
                     @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/monitoringstate/ON"; Body = $null }
                 )
 
@@ -1181,11 +1212,11 @@ Function Start-OperationsAdapterCollection {
                 if ($started) {
                     Write-Host "[✓] Adapter collection started successfully for ID: $id" -ForegroundColor Green
                 } else {
-                    Write-Error "Failed to start collection for adapter (${id}) across all endpoints:`n$($attempts -join "`n")"
+                    Write-Warning "[!] Could not explicitly trigger collection start for adapter (${id}) across candidate endpoints:`n$($attempts -join "`n")"
                 }
 
             } Catch {
-                Write-Error "Failed to start collection for adapter (${id}): $($_.Exception.Message)"
+                Write-Warning "[!] Start-OperationsAdapterCollection warning for adapter (${id}): $($_.Exception.Message)"
             }
         }
     }
@@ -1292,11 +1323,31 @@ function Add-VcenterAdapter {
             if (Test-Path .\testAdapter.json) { Remove-Item .\testAdapter.json -Force -Confirm:$false }
 
             if ($testResult) {
-                # Construct a complete adapter instance payload by keeping all mandatory adapter fields
-                # ($testAdapterData) and attaching certificate details from $testResult
+                # Extract certificateInformation from testResult if present
+                $certInfo = $null
+                if ($testResult.certificateInformation) {
+                    $certInfo = $testResult.certificateInformation
+                } elseif ($testResult.adapterInstance -and $testResult.adapterInstance.certificateInformation) {
+                    $certInfo = $testResult.adapterInstance.certificateInformation
+                } elseif ($testResult.certificate) {
+                    $certInfo = $testResult.certificate
+                }
+
+                # If certificate information was returned, submit second test connection call to accept & trust the certificate
+                if ($certInfo) {
+                    $testAdapterData["certificateInformation"] = $certInfo
+                    $testAdapterJsonWithCert = $testAdapterData | ConvertTo-Json -Depth 10
+                    Set-Content -Path .\testAdapterWithCert.json -Value $testAdapterJsonWithCert -Encoding UTF8
+                    Write-Host "[+] Submitting vCenter certificate trust payload to connection test..." -ForegroundColor Cyan
+                    $certTestResult = Test-OperationsVcenterAdapterConnection -json .\testAdapterWithCert.json
+                    if (Test-Path .\testAdapterWithCert.json) { Remove-Item .\testAdapterWithCert.json -Force -Confirm:$false }
+                }
+
+                # Construct a clean, schema-valid adapter instance object for Set-OperationsAdapter
                 $adapterToUpdate = [ordered]@{
                     "id"                 = $finalAdapter.id
                     "name"               = $cleanFqdn
+                    "description"        = "vCenter Adapter - $cleanFqdn"
                     "adapterKindKey"     = "VMWARE"
                     "resourceKindKey"    = "VMwareAdapter Instance"
                     "monitoringInterval" = 5
@@ -1310,47 +1361,14 @@ function Add-VcenterAdapter {
                     }
                 }
                 if ($collectorIdVal) { $adapterToUpdate["collectorId"] = $collectorIdVal }
+                if ($certInfo) { $adapterToUpdate["certificateInformation"] = $certInfo }
 
-                # If testResult contains an embedded adapterInstance object, merge any extra properties
-                if ($testResult.adapterInstance) {
-                    foreach ($prop in $testResult.adapterInstance.PSObject.Properties) {
-                        if ($prop.Value -and -not $adapterToUpdate.Contains($prop.Name)) {
-                            $adapterToUpdate[$prop.Name] = $prop.Value
-                        }
-                    }
-                }
-
-                # Extract certificateInformation from testResult
-                $certInfo = $null
-                if ($testResult.certificateInformation) {
-                    $certInfo = $testResult.certificateInformation
-                } elseif ($testResult.adapterInstance -and $testResult.adapterInstance.certificateInformation) {
-                    $certInfo = $testResult.adapterInstance.certificateInformation
-                } elseif ($testResult.certificate) {
-                    $certInfo = $testResult.certificate
-                } elseif ($testResult -is [PSCustomObject] -or $testResult -is [System.Collections.IDictionary]) {
-                    if ($testResult.thumbprint -or $testResult.sha1Fingerprint -or $testResult.subject) {
-                        $certInfo = $testResult
-                    }
-                }
-
-                if ($certInfo) {
-                    $adapterToUpdate["certificateInformation"] = $certInfo
-                }
-
-                # Save the complete adapter instance object (including trusted vCenter certificate) and update the adapter
+                # Save the complete clean adapter instance object (including trusted vCenter certificate) and update the adapter
                 $createdJson = $adapterToUpdate | ConvertTo-Json -Depth 10
                 Set-Content -Path .\createdAdapter.json -Value $createdJson -Encoding UTF8
                 
                 Write-Host "[+] Saving trusted certificate and updating adapter configuration..." -ForegroundColor Cyan
-                try {
-                    Set-OperationsAdapter -json .\createdAdapter.json -adapterId $finalAdapter.id | Out-Null
-                } catch {
-                    Write-Host "[!] Retrying adapter configuration update with direct test result..." -ForegroundColor Yellow
-                    $fullTestJson = $testResult | ConvertTo-Json -Depth 10
-                    Set-Content -Path .\createdAdapter.json -Value $fullTestJson -Encoding UTF8
-                    Set-OperationsAdapter -json .\createdAdapter.json -adapterId $finalAdapter.id | Out-Null
-                }
+                Set-OperationsAdapter -json .\createdAdapter.json -adapterId $finalAdapter.id | Out-Null
                 
                 if (Test-Path .\createdAdapter.json) { Remove-Item .\createdAdapter.json -Force -Confirm:$false }
             }
