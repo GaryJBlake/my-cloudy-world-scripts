@@ -50,52 +50,6 @@ function Test-VsphereAuthentication {
     }
 }
 
-function Request-OperationsToken {
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$fqdn,
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$username,
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$password
-    )
-
-    if ( -not $PsBoundParameters.ContainsKey("username") -or ( -not $PsBoundParameters.ContainsKey("password"))) {
-        $creds = Get-Credential # Request Credentials
-        $username = $creds.UserName.ToString()
-        $password = $creds.GetNetworkCredential().password
-    }
-
-    try {
-        Write-Host "`n[+] Connecting to VCF Operations: '$fqdn'..." -NoNewLine -ForegroundColor Cyan
-        $Global:operationsAppliance = $fqdn
-        $Global:operationsHeaders = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
-        $operationsHeaders.Add("Accept", "application/json")
-        $operationsHeaders.Add("Content-Type", "application/json")
-        $uri = "https://$operationsAppliance/suite-api/api/auth/token/acquire"
-        $body = "{
-        `n  `"username`" : `"$username`",
-        `n  `"authSource`" : `"LOCAL`",
-        `n  `"password`" : `"$password`"
-        `n}"
-        if ($PSEdition -eq 'Core') {
-            $operationsResponse = Invoke-RestMethod -Method POST `
-                -Uri $uri `
-                -Headers $operationsHeaders `
-                -Body $body `
-                -SkipCertificateCheck 
-        } else {
-            $operationsResponse = Invoke-RestMethod -Method POST `
-                -Uri $uri `
-                -Headers $operationsHeaders `
-                -Body $body `
-        }
-        if ($operationsResponse.token) {
-            $operationsHeaders.Add("Authorization", "OpsToken " + $operationsResponse.token)
-            Write-Host "`n[✓] Successfully connected to VCF Operations: $operationsAppliance" -NoNewLine -ForegroundColor Green
-        }
-    } catch {
-        Write-Error $_.Exception.Message
-    }
-}
-
 function Get-VCFNodeThumbprint {
     param(
         [Parameter(Mandatory = $true)] [string]$fqdn, [int]$port = 443
@@ -676,858 +630,369 @@ function Set-CeipSetting {
     }
 }
 
-Function Add-OperationsVcenterAdapter {
-    <#
-        .SYNOPSIS
-        Add an adapter.
-
-        .DESCRIPTION
-        The Add-OperationsAdapter cmdlet adds an adapter to VCF Operations
-
-        .EXAMPLE
-        Add-OperationsAdapter -json .\addAdapter.json
-        This example adds an adapter using the json specification file.
-
-        .PARAMETER json
-        The JSON file to use for the add.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("json")) {
-            if (!(Test-Path $json)) {
-                Throw "JSON File Not Found"
-            } else {
-                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
-            }
-        }
-
-        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
-            $operationsHeaders.Add("Content-Type", "application/json")
-        }
-
-        # Suite API endpoints: Try integrations endpoint first, fallback to adapters endpoint if 422 occurs
-        try {
-            $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters"
-            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-            return $response
-        } catch {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters"
-            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-            return $response
-        }
-    } Catch {
-        $errDetails = $_.Exception.Message
-        if ($_.Exception.Response) {
-            try {
-                $stream = $_.Exception.Response.GetResponseStream()
-                $reader = New-Object System.IO.StreamReader($stream)
-                $respBody = $reader.ReadToEnd()
-                if ($respBody) { $errDetails = $respBody }
-            } catch {}
-        }
-        Write-Error "Failed to add Operations vCenter adapter: $errDetails"
-    }
-}
-
-Function Test-OperationsVcenterAdapterConnection {
-    <#
-        .SYNOPSIS
-        Test adapter connection.
-
-        .DESCRIPTION
-        The Test-OperationsVcenterAdapterConnection cmdlet tests the connection in VCF Operations
-
-        .EXAMPLE
-        Test-OperationsVcenterAdapterConnection -json <json>
-        This example tests the connection based on the JSON file provided
-
-        .PARAMETER json
-        The JSON file to use for the test.
-    #>
-
-
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("json")) {
-            if (!(Test-Path $json)) {
-                Throw "JSON File Not Found"
-            } else {
-                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
-            }
-        }
-
-        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
-            $operationsHeaders.Add("Content-Type", "application/json")
-        }
-
-        try {
-            $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters/testConnection"
-            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-            return $response
-        } catch {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters/testConnection"
-            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-            return $response
-        }
-    } Catch {
-        $errDetails = $_.Exception.Message
-        if ($_.Exception.Response) {
-            try {
-                $stream = $_.Exception.Response.GetResponseStream()
-                $reader = New-Object System.IO.StreamReader($stream)
-                $respBody = $reader.ReadToEnd()
-                if ($respBody) { $errDetails = $respBody }
-            } catch {}
-        }
-        Write-Error "Failed to test Operations vCenter adapter connection: $errDetails"
-    }
-}
-
-Function Get-OperationsAdapter {
-    <#
-        .SYNOPSIS
-        Get list of adapters.
-
-        .DESCRIPTION
-        The Get-OperationsAdapter cmdlet gets a list of adapters in VCF Operations
-
-        .EXAMPLE
-        Get-OperationsAdapter
-        This example gets a list of all adapters
-
-        .EXAMPLE
-        Get-OperationsAdapter -id <id>
-        This example gets details of an adapter by its ID.
-
-        .PARAMETER id
-        The ID of the adapter to get details for.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$id
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("id")) {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters/$id"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response
-        } else {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response.adapterInstancesInfoDto
-        }
-    } Catch {
-        Write-Warning "[!] Get-OperationsAdapter warning: $($_.Exception.Message)"
-    }
-}
-
-Function Get-OperationsCredential {
-    <#
-        .SYNOPSIS
-        Get credentials.
-
-        .DESCRIPTION
-        The Get-OperationsCredential cmdlet gets credentials from VCF Operations
-
-        .EXAMPLE
-        Get-OperationsCredential
-        This example gets all credentials from VCF Operations.
-
-        .PARAMETER credentialId
-        The ID of the credential to get.
-
-        .PARAMETER adapter
-        The adapter to get credentials for.
-
-        .PARAMETER resource
-        The resource to get credentials for.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$credentialId,
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [Switch]$adapter,
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [Switch]$resource
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("credentialId") -and (-not $PsBoundParameters.ContainsKey("adapter") -and (-not $PsBoundParameters.ContainsKey("resource")))) {
-            $uri = "https://$operationsAppliance/suite-api/api/credentials/$credentialId"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response
-        } elseif ($PsBoundParameters.ContainsKey("credentialId") -and ($PsBoundParameters.ContainsKey("adapter"))) {
-            $uri = "https://$operationsAppliance/suite-api/api/credentials/$credentialId/adapters"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response.adapterInstancesInfoDto
-        } elseif ($PsBoundParameters.ContainsKey("credentialId") -and ($PsBoundParameters.ContainsKey("resource"))) {
-            $uri = "https://$operationsAppliance/suite-api/api/credentials/$credentialId/resources"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response
-        } else {
-            $uri = "https://$operationsAppliance/suite-api/api/credentials"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response.credentialInstances
-        }
-    } Catch {
-        Write-Warning "[!] Get-OperationsCredential warning: $($_.Exception.Message)"
-    }
-}
-
-Function Add-OperationsCredential {
-    <#
-        .SYNOPSIS
-        Add a credential.
-
-        .DESCRIPTION
-        The Add-OperationsCredential cmdlet adds a credential to VCF Operations
-
-        .EXAMPLE
-        Add-OperationsCredential -json .\credentialJson
-        This example adds a new credential.
-
-        .PARAMETER json
-        The JSON file containing the credential details.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("json")) {
-            if (!(Test-Path $json)) {
-                Throw "JSON File Not Found"
-            } else {
-                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
-            }
-        }
-        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
-            $operationsHeaders.Add("Content-Type", "application/json")
-        }
-        $uri = "https://$operationsAppliance/suite-api/api/credentials"
-        $response = Invoke-RestMethod -Method 'POST' -Uri $Uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
-        $response
-    } Catch {
-        Write-Warning "[!] Add-OperationsCredential warning: $($_.Exception.Message)"
-    }
-}
-
-Function Get-OperationsCollectorGroup {
-    <#
-        .SYNOPSIS
-        Get list of collector groups.
-
-        .DESCRIPTION
-        The Get-OperationsCollectorGroup cmdlet gets a list of collector groups in VCF Operations
-
-        .EXAMPLE
-        Get-OperationsCollectorGroup
-        This example gets a list of collector groups
-
-        .EXAMPLE
-        Get-OperationsCollectorGroup -id <id>
-        This example gets details of a collector by its ID.
-
-        .PARAMETER id
-        The ID of the collector group to get details for.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$id
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("id")) {
-            $uri = "https://$operationsAppliance/suite-api/api/collectorgroups/$id"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response
-        } else {
-            $uri = "https://$operationsAppliance/suite-api/api/collectorgroups"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response.collectorGroups
-        }
-    } Catch {
-        Write-Warning "[!] Get-OperationsCollectorGroup warning: $($_.Exception.Message)"
-    }
-}
-
-Function Test-OperationsAdapterConnection {
-    <#
-        .SYNOPSIS
-        Test adapter connection.
-
-        .DESCRIPTION
-        The Test-OperationsAdapterConnection cmdlet tests the connection in VCF Operations
-
-        .EXAMPLE
-        Test-OperationsAdapterConnection -json <json>
-        This example tests the connection based on the JSON file provided
-
-        .PARAMETER json
-        The JSON file to use for the test.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("json")) {
-            if (!(Test-Path $json)) {
-                Throw "JSON File Not Found"
-            } else {
-                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
-            }
-        }
-        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
-            $operationsHeaders.Add("Content-Type", "application/json")
-        }
-        $uri = "https://$operationsAppliance/suite-api/api/adapters/testConnection"
-        $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
-        $response
-    } Catch {
-        Write-Warning "[!] Test-OperationsAdapterConnection warning: $($_.Exception.Message)"
-    }
-}
-
-Function Set-OperationsAdapter {
-    <#
-        .SYNOPSIS
-        Update an adapter.
-
-        .DESCRIPTION
-        The Set-OperationsAdapter cmdlet updates the adapters configuration in VCF Operations
-
-        .EXAMPLE
-        Set-OperationsAdapter -json .\adapterJson -adapterId <id>
-        This example updates the details of an adapter.
-
-        .PARAMETER json
-        The JSON file to use for the update.
-
-        .PARAMETER adapterId
-        Optional ID of the adapter to update in the URI path.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json,
-        [Parameter (Mandatory = $false)] [String]$adapterId
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("json")) {
-            if (!(Test-Path $json)) {
-                Throw "JSON File Not Found"
-            } else {
-                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
-            }
-        }
-
-        # Try to extract adapterId from json if not explicitly passed and strip read-only fields
-        $parsed = $null
-        try {
-            $parsed = $body | ConvertFrom-Json
-            if ([string]::IsNullOrWhiteSpace($adapterId)) {
-                if ($parsed.id) { $adapterId = $parsed.id }
-                elseif ($parsed.adapterInstancesInfoDto.id) { $adapterId = $parsed.adapterInstancesInfoDto.id }
-                elseif ($parsed.adapterInstancesInfoDto -is [array] -and $parsed.adapterInstancesInfoDto[0].id) { $adapterId = $parsed.adapterInstancesInfoDto[0].id }
-                elseif ($parsed.adapterInstanceInfoDto.id) { $adapterId = $parsed.adapterInstanceInfoDto.id }
-                elseif ($parsed.adapterInstance.id) { $adapterId = $parsed.adapterInstance.id }
-            }
-
-            # Helper to strip read-only properties from object before PUT/POST
-            $stripReadOnly = {
-                param($item)
-                if ($item -is [PSCustomObject]) {
-                    $item.PSObject.Properties.Remove('certificateInformation')
-                    $item.PSObject.Properties.Remove('links')
-                }
-            }
-
-            if ($parsed) {
-                &$stripReadOnly $parsed
-                if ($parsed.adapterInstancesInfoDto) {
-                    if ($parsed.adapterInstancesInfoDto -is [array]) {
-                        foreach ($elem in $parsed.adapterInstancesInfoDto) { &$stripReadOnly $elem }
-                    } else {
-                        &$stripReadOnly $parsed.adapterInstancesInfoDto
-                    }
-                }
-                if ($parsed.adapterInstanceInfoDto) {
-                    if ($parsed.adapterInstanceInfoDto -is [array]) {
-                        foreach ($elem in $parsed.adapterInstanceInfoDto) { &$stripReadOnly $elem }
-                    } else {
-                        &$stripReadOnly $parsed.adapterInstanceInfoDto
-                    }
-                }
-            }
-        } catch {}
-
-        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
-            $operationsHeaders.Add("Content-Type", "application/json")
-        }
-
-        # List of candidate payload variations (plural adapterInstancesInfoDto first as expected by vROps API)
-        $bodiesToTry = @()
-        if ($parsed) {
-            if ($parsed.adapterInstancesInfoDto) {
-                $bodiesToTry += ($parsed | ConvertTo-Json -Depth 10)
-            } elseif ($parsed.adapterInstanceInfoDto) {
-                $unwrapped = $parsed.adapterInstanceInfoDto
-                $bodiesToTry += (@{ adapterInstancesInfoDto = @($unwrapped) } | ConvertTo-Json -Depth 10)
-                $bodiesToTry += ($parsed | ConvertTo-Json -Depth 10)
-            } else {
-                $bodiesToTry += (@{ adapterInstancesInfoDto = @($parsed) } | ConvertTo-Json -Depth 10)
-                $bodiesToTry += (@{ adapterInstancesInfoDto = $parsed } | ConvertTo-Json -Depth 10)
-                $bodiesToTry += (@{ "adapter-instances-info" = @($parsed) } | ConvertTo-Json -Depth 10)
-            }
-            if ($parsed.adapterInstance) {
-                $bodiesToTry += ($parsed.adapterInstance | ConvertTo-Json -Depth 10)
-            }
-        }
-        $bodiesToTry += $body
-
-        $attempts = @()
-
-        # List of candidate endpoints for updating an adapter
-        $endpoints = @(
-            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters" },
-            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" },
-            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/adapters" },
-            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" }
-        )
-        if (-not [string]::IsNullOrWhiteSpace($adapterId)) {
-            $endpoints += @(
-                @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId" },
-                @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters/$adapterId" },
-                @{ Method = 'PATCH'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId" }
-            )
-        }
-
-        foreach ($payloadBody in $bodiesToTry) {
-            foreach ($ep in $endpoints) {
-                try {
-                    $response = Invoke-RestMethod -Method $ep.Method -Uri $ep.Uri -Headers $operationsHeaders -Body $payloadBody -SkipCertificateCheck -ErrorAction Stop
-                    return $response
-                } catch {
-                    $err = $_.Exception.Message
-                    if ($_.Exception.Response) {
-                        try {
-                            $s = $_.Exception.Response.GetResponseStream()
-                            $r = New-Object System.IO.StreamReader($s)
-                            $b = $r.ReadToEnd()
-                            if ($b) { $err = $b }
-                        } catch {}
-                    }
-                    $attempts += "$($ep.Method) $($ep.Uri) => $err"
-                }
-            }
-        }
-
-        Write-Verbose "[!] Set-OperationsAdapter candidate endpoint attempts:`n$($attempts -join "`n")"
-    } Catch {
-        Write-Verbose "[!] Set-OperationsAdapter warning: $($_.Exception.Message)"
-    }
-}
-
-Function Start-OperationsAdapterCollection {
-    <#
-        .SYNOPSIS
-        Starts collection / enables monitoring for adapter instance(s) via the VCF Operations Suite API.
-
-        .DESCRIPTION
-        Attempts standard VCF Operations REST API endpoints to transition adapter instance monitoring 
-        state to ON/STARTED using OpsToken authorization ($Global:operationsHeaders).
-
-        .EXAMPLE
-        Start-OperationsAdapterCollection -adapterInstanceIds "7ef2cb90-864a-43fc-aec9-40bf40f89c66"
-
-        .EXAMPLE
-        Start-OperationsAdapterCollection -adapterInstanceIds @("guid-1", "guid-2")
-
-        .EXAMPLE
-        "7ef2cb90-864a-43fc-aec9-40bf40f89c66" | Start-OperationsAdapterCollection
-
-        .PARAMETER adapterInstanceIds
-        One or more adapter instance GUIDs to start collection for. Accepts single string, array, or pipeline input.
-    #>
+function Request-OperationsToken {
     [CmdletBinding()]
-    Param (
-        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
-        [ValidateNotNullOrEmpty()]
-        [String[]]$adapterInstanceIds
-    )
-
-    Process {
-        # Format array of IDs for collection body endpoints
-        $idArray = @($adapterInstanceIds)
-
-        foreach ($id in $idArray) {
-            Try {
-                Write-Host "[+] Starting collection and enabling management activation for adapter instance: $id" -ForegroundColor Cyan
-
-                # Ensure Content-Type header is set
-                if (-not $Global:operationsHeaders.ContainsKey("Content-Type")) {
-                    $Global:operationsHeaders.Add("Content-Type", "application/json")
-                }
-
-                # Helper to safely extract adapter DTO object from API response
-                $extractDto = {
-                    param($obj)
-                    if (-not $obj) { return $null }
-                    if ($obj.adapterInstancesInfoDto) {
-                        if ($obj.adapterInstancesInfoDto -is [array]) { return $obj.adapterInstancesInfoDto[0] }
-                        return $obj.adapterInstancesInfoDto
-                    }
-                    if ($obj.adapterInstanceInfoDto) {
-                        if ($obj.adapterInstanceInfoDto -is [array]) { return $obj.adapterInstanceInfoDto[0] }
-                        return $obj.adapterInstanceInfoDto
-                    }
-                    if ($obj.adapterInstanceHeaderDto) {
-                        return $obj.adapterInstanceHeaderDto
-                    }
-                    return $obj
-                }
-
-                # 1. Check if adapter monitoring state is already active
-                try {
-                    $existing = Get-OperationsAdapter -id $id
-                    $dto = &$extractDto $existing
-                    if ($dto) {
-                        $currentState = $dto.monitoringState
-                        $mgmtState = $dto.managementState
-                        if (($currentState -eq "ON" -or $currentState -eq "STARTED" -or $currentState -eq "COLLECTING") -and ($mgmtState -eq "ON" -or $mgmtState -eq "ACTIVE")) {
-                            Write-Host "[✓] Adapter collection is active (monitoringState: $currentState, managementState: $mgmtState) for ID: $id" -ForegroundColor Green
-                            continue
-                        }
-                    }
-                } catch {}
-
-                $started = $false
-                $attempts = @()
-
-                # Build internal headers for internal Suite API endpoints
-                $internalHeaders = @{}
-                foreach ($k in $Global:operationsHeaders.Keys) { $internalHeaders[$k] = $Global:operationsHeaders[$k] }
-                $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
-                $internalHeaders["X-Ops-API-use-unsupported"] = "true"
-
-                # Candidate REST endpoints & payloads for starting adapter / resource monitoring state and management activation
-                $endpoints = @(
-                    # 1. Integration Activation & Management State Endpoints
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/activate"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/activate"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/enable"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/enable"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/start"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/collect"; Headers = $Global:operationsHeaders; Body = $null },
-
-                    # 2. Official vROps Adapter Monitoring State Endpoints with Query Parameters
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON?adapterInstanceId=${id}"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON?adapterInstanceId=${id}"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON?id=${id}"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate?state=ON"; Headers = $Global:operationsHeaders; Body = $null },
-
-                    # 3. Official vROps Adapter Monitoring State Endpoints with JSON Body
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@{ adapterInstanceIds = @($id) } | ConvertTo-Json) },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@{ adapterInstanceIds = @($id) } | ConvertTo-Json) },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
-
-                    # 4. Standard Suite API Adapters Endpoint (Plural JAXB DTO)
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Headers = $Global:operationsHeaders; Body = (@{ "adapterInstancesInfoDto" = @( @{ id = $id; monitoringState = "ON"; managementState = "ON" } ) } | ConvertTo-Json -Depth 5) },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Headers = $Global:operationsHeaders; Body = (@{ "adapter-monitoring-state" = @( @{ adapterInstanceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
-
-                    # 5. Standard Suite API Resources Endpoint (Resource monitoring state ON)
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate/ON?resourceId=${id}"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/${id}/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/${id}/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = $null },
-
-                    # 6. Internal Suite API Management Activation & Monitoring Endpoints
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/internal/integrations/vcenters/${id}/activate"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/integrations/vcenters/${id}/activate"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/internal/integrations/vcenters/${id}/management-activation"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/integrations/vcenters/${id}/management-activation"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/activate"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/activate"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/monitoringstate/ON"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/monitoringstate/ON"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/start"; Headers = $internalHeaders; Body = $null }
-                )
-
-                foreach ($ep in $endpoints) {
-                    try {
-                        $params = @{
-                            Method               = $ep.Method
-                            Uri                  = $ep.Uri
-                            Headers              = if ($ep.Headers) { $ep.Headers } else { $Global:operationsHeaders }
-                            SkipCertificateCheck = $true
-                            ErrorAction          = 'Stop'
-                        }
-                        if ($ep.Body) {
-                            $params['Body'] = $ep.Body
-                        }
-
-                        Invoke-RestMethod @params | Out-Null
-                        $started = $true
-                        break
-                    } catch {
-                        $err = $_.Exception.Message
-                        if ($_.Exception.Response) {
-                            try {
-                                $stream = $_.Exception.Response.GetResponseStream()
-                                $reader = New-Object System.IO.StreamReader($stream)
-                                $respBody = $reader.ReadToEnd()
-                                if ($respBody) { $err = $respBody }
-                            } catch {}
-                        }
-                        $attempts += "$($ep.Method) $($ep.Uri) => $err"
-                    }
-                }
-
-                # XML Payload Fallback for PUT /suite-api/api/adapters/monitoringstate
-                if (-not $started) {
-                    try {
-                        $xmlHeaders = @{}
-                        foreach ($k in $Global:operationsHeaders.Keys) { $xmlHeaders[$k] = $Global:operationsHeaders[$k] }
-                        $xmlHeaders["Content-Type"] = "application/xml"
-                        $xmlBody = "<adapter-monitoring-state xmlns=""http://vrops.vmware.com/suite-api/raw""><adapter-monitoring-state adapterInstanceId=""$id"" monitoringState=""ON""/></adapter-monitoring-state>"
-                        Invoke-RestMethod -Method 'PUT' -Uri "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate" -Headers $xmlHeaders -Body $xmlBody -SkipCertificateCheck -ErrorAction Stop | Out-Null
-                        $started = $true
-                    } catch {}
-                }
-
-                # Direct Adapter Object Update Fallback: Force monitoringState = "ON" and managementState = "ON" via Set-OperationsAdapter
-                if (-not $started) {
-                    try {
-                        $adapterObj = Get-OperationsAdapter -id $id
-                        $dtoToUpdate = &$extractDto $adapterObj
-                        if ($dtoToUpdate) {
-                            if ($dtoToUpdate -is [PSCustomObject]) {
-                                $dtoToUpdate.PSObject.Properties.Remove('certificateInformation')
-                                $dtoToUpdate.PSObject.Properties.Remove('links')
-                                if ($dtoToUpdate.PSObject.Properties['monitoringState']) { $dtoToUpdate.monitoringState = "ON" }
-                                else { $dtoToUpdate | Add-Member -MemberType NoteProperty -Name "monitoringState" -Value "ON" -Force }
-                                if ($dtoToUpdate.PSObject.Properties['managementState']) { $dtoToUpdate.managementState = "ON" }
-                                else { $dtoToUpdate | Add-Member -MemberType NoteProperty -Name "managementState" -Value "ON" -Force }
-                            } elseif ($dtoToUpdate -is [System.Collections.IDictionary]) {
-                                $dtoToUpdate.Remove('certificateInformation')
-                                $dtoToUpdate.Remove('links')
-                                $dtoToUpdate["monitoringState"] = "ON"
-                                $dtoToUpdate["managementState"] = "ON"
-                            }
-
-                            $updatePayload = @{ adapterInstancesInfoDto = @($dtoToUpdate) } | ConvertTo-Json -Depth 10
-                            Set-Content -Path .\startAdapterTmp.json -Value $updatePayload -Encoding UTF8
-                            Set-OperationsAdapter -json .\startAdapterTmp.json -adapterId $id | Out-Null
-                            if (Test-Path .\startAdapterTmp.json) { Remove-Item .\startAdapterTmp.json -Force -Confirm:$false }
-                            $started = $true
-                        }
-                    } catch {}
-                }
-
-                # Verify collection status
-                Start-Sleep -Seconds 2
-                try {
-                    $verifyAdapter = Get-OperationsAdapter -id $id
-                    $dtoVerify = &$extractDto $verifyAdapter
-                    if ($dtoVerify) {
-                        $finalState = $dtoVerify.monitoringState
-                        $finalMgmtState = $dtoVerify.managementState
-                        if ($finalState -eq "ON" -or $finalState -eq "STARTED" -or $finalState -eq "COLLECTING" -or $finalMgmtState -eq "ON" -or $finalMgmtState -eq "ACTIVE") {
-                            $started = $true
-                        }
-                    }
-                } catch {}
-
-                if ($started) {
-                    Write-Host "[✓] Adapter collection started and management activation enabled successfully for ID: $id" -ForegroundColor Green
-                } else {
-                    Write-Verbose "[!] Collection start endpoint attempts:`n$($attempts -join "`n")"
-                    Write-Host "[✓] Adapter collection initiated for ID: $id" -ForegroundColor Green
-                }
-
-            } Catch {
-                Write-Verbose "[!] Start-OperationsAdapterCollection warning for adapter (${id}): $($_.Exception.Message)"
-                Write-Host "[✓] Adapter collection initiated for ID: $id" -ForegroundColor Green
-            }
-        }
-    }
-}
-
-function Add-VcenterAdapter {
     param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$fqdn,
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$username,
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$password
+        [Parameter(Mandatory = $true)] [String]$Fqdn,
+        [Parameter(Mandatory = $true)] [String]$Username,
+        [Parameter(Mandatory = $true)] [String]$Password
     )
+
+    Write-Host "[+] Acquiring VCF Operations API token from '$Fqdn'..." -ForegroundColor Cyan
+    $uri = "https://$Fqdn/suite-api/api/auth/token/acquire"
+    $headers = @{
+        "Accept"       = "application/json"
+        "Content-Type" = "application/json"
+    }
+    $body = @{
+        "username"   = $Username
+        "authSource" = "LOCAL"
+        "password"   = $Password
+    } | ConvertTo-Json
 
     try {
-        Write-Host "[+] Adding vCenter adapter for: $($fqdn)" -ForegroundColor Cyan
-        $cleanFqdn = $fqdn -replace '^https?://', '' -replace '/.*$', ''
-        
-        # 1. Ensure Credential Exists
-        if (-Not (Get-OperationsCredential | Where-Object { $_.name -eq $cleanFqdn -or $_.name -eq $fqdn })) {
-            $credentialJson = '{
-                "name": "'+ $cleanFqdn + '",
-                "adapterKindKey": "VMWARE",
-                "credentialKindKey": "PRINCIPALCREDENTIAL",
-                "fields": [
-                    { "name": "USER", "value": "'+ $username + '" },
-                    { "name": "PASSWORD", "value": "'+ $password + '" }
-            ]}'
-            Set-Content -Path .\addCredential.json -Value $credentialJson -Encoding UTF8
-            Add-OperationsCredential -json .\addCredential.json | Out-Null
-            if (Test-Path .\addCredential.json) { Remove-Item .\addCredential.json -Force -Confirm:$false }
-        }
-
-        # Retrieve Collector Group UUID (.id property)
-        $collector = Get-OperationsCollectorGroup | Select-Object -First 1
-        $collectorIdVal = if ($collector -and $collector.id) { $collector.id } elseif ($collector -and $collector.collectorGroupId) { $collector.collectorGroupId } else { $null }
-
-        $credObj = Get-OperationsCredential | Where-Object { $_.name -eq $cleanFqdn -or $_.name -eq $fqdn } | Select-Object -First 1
-        if (-not $credObj) {
-            throw "Could not find credential for $cleanFqdn in VCF Operations"
-        }
-
-        # 2. Check if adapter already exists
-        $existingAdapters = Get-OperationsAdapter
-        $finalAdapter = $existingAdapters | Where-Object { $_.resourceKey.name -eq $cleanFqdn -or $_.name -eq $cleanFqdn -or $_.resourceKey.name -eq $fqdn -or $_.name -eq $fqdn } | Select-Object -First 1
-
-        if (-not $finalAdapter) {
-            # Build adapter creation payload
-            $adapterData = [ordered]@{
-                "name"               = $cleanFqdn
-                "description"        = "vCenter Adapter - $cleanFqdn"
-                "adapterKindKey"     = "VMWARE"
-                "resourceKindKey"    = "VMwareAdapter Instance"
-                "monitoringInterval" = 5
-                "monitoringState"    = "ON"
-                "managementState"    = "ON"
-                "resourceIdentifiers"= @(
-                    @{ "name" = "AUTODISCOVERY"; "value" = "true" },
-                    @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" },
-                    @{ "name" = "VCURL"; "value" = "https://$cleanFqdn/sdk" }
-                )
-                "credential"         = @{
-                    "id" = $credObj.id
-                }
-            }
-
-            if ($collectorIdVal) {
-                $adapterData["collectorId"] = $collectorIdVal
-            }
-
-            $adapterJson = $adapterData | ConvertTo-Json -Depth 5
-            Set-Content -Path .\addAdapter.json -Value $adapterJson -Encoding UTF8
-
-            Add-OperationsVcenterAdapter -json .\addAdapter.json | Out-Null
-            
-            # Re-fetch the newly created adapter to obtain its assigned ID
-            $finalAdapter = Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $cleanFqdn -or $_.name -eq $cleanFqdn -or $_.resourceKey.name -eq $fqdn -or $_.name -eq $fqdn } | Select-Object -First 1
-            if (Test-Path .\addAdapter.json) { Remove-Item .\addAdapter.json -Force -Confirm:$false }
+        if ($PSEdition -eq 'Core') {
+            $response = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -Body $body -SkipCertificateCheck -ErrorAction Stop
         } else {
-            Write-Host "[!] vCenter adapter already exists in VCF Operations ($cleanFqdn)" -ForegroundColor Yellow
+            $response = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -Body $body -ErrorAction Stop
         }
 
-        if ($finalAdapter) {
-            Write-Host "[+] Testing connection and trusting vCenter SSL certificate..." -ForegroundColor Cyan
-            
-            # Prepare payload for test connection
-            $testAdapterData = [ordered]@{
-                "id"                 = $finalAdapter.id
-                "name"               = $cleanFqdn
-                "adapterKindKey"     = "VMWARE"
-                "resourceKindKey"    = "VMwareAdapter Instance"
-                "monitoringInterval" = 5
-                "resourceIdentifiers"= @(
-                    @{ "name" = "AUTODISCOVERY"; "value" = "true" },
-                    @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" },
-                    @{ "name" = "VCURL"; "value" = "https://$cleanFqdn/sdk" }
-                )
-                "credential"         = @{
-                    "id" = $credObj.id
-                }
-            }
-            if ($collectorIdVal) { $testAdapterData["collectorId"] = $collectorIdVal }
-
-            $testAdapterJson = $testAdapterData | ConvertTo-Json -Depth 5
-            Set-Content -Path .\testAdapter.json -Value $testAdapterJson -Encoding UTF8
-
-            $testResult = Test-OperationsVcenterAdapterConnection -json .\testAdapter.json
-            if (Test-Path .\testAdapter.json) { Remove-Item .\testAdapter.json -Force -Confirm:$false }
-
-            if ($testResult) {
-                # Extract certificateInformation from testResult if present
-                $certInfo = $null
-                if ($testResult.certificateInformation) {
-                    $certInfo = $testResult.certificateInformation
-                } elseif ($testResult.adapterInstance -and $testResult.adapterInstance.certificateInformation) {
-                    $certInfo = $testResult.adapterInstance.certificateInformation
-                } elseif ($testResult.certificate) {
-                    $certInfo = $testResult.certificate
-                }
-
-                # If certificate information was returned, submit second test connection call to accept & trust the certificate
-                if ($certInfo) {
-                    $testAdapterData["certificateInformation"] = $certInfo
-                    $testAdapterJsonWithCert = $testAdapterData | ConvertTo-Json -Depth 10
-                    Set-Content -Path .\testAdapterWithCert.json -Value $testAdapterJsonWithCert -Encoding UTF8
-                    Write-Host "[+] Submitting vCenter certificate trust payload to connection test..." -ForegroundColor Cyan
-                    $certTestResult = Test-OperationsVcenterAdapterConnection -json .\testAdapterWithCert.json
-                    if (Test-Path .\testAdapterWithCert.json) { Remove-Item .\testAdapterWithCert.json -Force -Confirm:$false }
-                }
-
-                # Construct a clean, schema-valid adapter instance object for Set-OperationsAdapter
-                $adapterToUpdate = [ordered]@{
-                    "id"                 = $finalAdapter.id
-                    "name"               = $cleanFqdn
-                    "description"        = "vCenter Adapter - $cleanFqdn"
-                    "adapterKindKey"     = "VMWARE"
-                    "resourceKindKey"    = "VMwareAdapter Instance"
-                    "monitoringInterval" = 5
-                    "monitoringState"    = "ON"
-                    "managementState"    = "ON"
-                    "resourceIdentifiers"= @(
-                        @{ "name" = "AUTODISCOVERY"; "value" = "true" },
-                        @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" },
-                        @{ "name" = "VCURL"; "value" = "https://$cleanFqdn/sdk" }
-                    )
-                    "credential"         = @{
-                        "id" = $credObj.id
-                    }
-                }
-                if ($collectorIdVal) { $adapterToUpdate["collectorId"] = $collectorIdVal }
-
-                # Save the clean adapter instance object and update the adapter configuration
-                $createdJson = $adapterToUpdate | ConvertTo-Json -Depth 10
-                Set-Content -Path .\createdAdapter.json -Value $createdJson -Encoding UTF8
-                
-                Write-Host "[+] Updating adapter configuration and enabling collection..." -ForegroundColor Cyan
-                Set-OperationsAdapter -json .\createdAdapter.json -adapterId $finalAdapter.id | Out-Null
-                
-                if (Test-Path .\createdAdapter.json) { Remove-Item .\createdAdapter.json -Force -Confirm:$false }
-            }
-
-            Start-Sleep -Seconds 5
-            Start-OperationsAdapterCollection -adapterInstanceIds $finalAdapter.id
-            Write-Host "[✓] Added and registered vCenter adapter in VCF Operations successfully" -ForegroundColor Green
+        if ($response.token) {
+            Write-Host "[✓] Successfully acquired OpsToken" -ForegroundColor Green
+            return $response.token
         } else {
-            Write-Host "[x] Adding vCenter adapter to VCF Operations failed" -ForegroundColor Red
+            throw "Token empty in response"
         }
-    } catch {
-        Write-Error "Add-VcenterAdapter error: $_"
     }
+    catch {
+        Write-Error "Failed to acquire OpsToken: $_"
+        throw
+    }
+}
+
+function Get-OperationsCredential {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)] [String]$Fqdn,
+        [Parameter(Mandatory = $true)] [Hashtable]$Headers
+    )
+
+    Write-Host "[+] Querying credentials in VCF Operations..." -ForegroundColor Cyan
+    $uri = "https://$Fqdn/suite-api/api/credentials"
+    try {
+        if ($PSEdition -eq 'Core') {
+            $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $Headers -SkipCertificateCheck -ErrorAction Stop
+        } else {
+            $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $Headers -ErrorAction Stop
+        }
+        return $response.credentialInstances
+    }
+    catch {
+        Write-Warning "[!] Get-OperationsCredential warning: $_"
+        return @()
+    }
+}
+
+function Add-OperationsCredential {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)] [String]$Fqdn,
+        [Parameter(Mandatory = $true)] [Hashtable]$Headers,
+        [Parameter(Mandatory = $true)] [String]$CredentialName,
+        [Parameter(Mandatory = $true)] [String]$User,
+        [Parameter(Mandatory = $true)] [String]$Pass
+    )
+
+    Write-Host "[+] Creating credential '$CredentialName' in VCF Operations..." -ForegroundColor Cyan
+    $uri = "https://$Fqdn/suite-api/api/credentials"
+    $body = @{
+        "name"              = $CredentialName
+        "adapterKindKey"    = "VMWARE"
+        "credentialKindKey" = "PRINCIPALCREDENTIAL"
+        "fields"            = @(
+            @{ "name" = "USER"; "value" = $User },
+            @{ "name" = "PASSWORD"; "value" = $Pass }
+        )
+    } | ConvertTo-Json -Depth 5
+
+    try {
+        if ($PSEdition -eq 'Core') {
+            $response = Invoke-RestMethod -Method POST -Uri $uri -Headers $Headers -Body $body -SkipCertificateCheck -ErrorAction Stop
+        } else {
+            $response = Invoke-RestMethod -Method POST -Uri $uri -Headers $Headers -Body $body -ErrorAction Stop
+        }
+        Write-Host "[✓] Credential '$CredentialName' created successfully" -ForegroundColor Green
+        return $response
+    }
+    catch {
+        Write-Error "Failed to add credential '$CredentialName': $_"
+        throw
+    }
+}
+
+function Get-OperationsCollectorGroup {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)] [String]$Fqdn,
+        [Parameter(Mandatory = $true)] [Hashtable]$Headers
+    )
+
+    Write-Host "[+] Querying collector groups in VCF Operations..." -ForegroundColor Cyan
+    $uri = "https://$Fqdn/suite-api/api/collectorgroups"
+    try {
+        if ($PSEdition -eq 'Core') {
+            $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $Headers -SkipCertificateCheck -ErrorAction Stop
+        } else {
+            $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $Headers -ErrorAction Stop
+        }
+        return $response.collectorGroups
+    }
+    catch {
+        Write-Warning "[!] Get-OperationsCollectorGroup warning: $_"
+        return @()
+    }
+}
+
+
+function Invoke-OperationsRest {
+    # Single REST wrapper. Returns @{ Ok; Status; Body } and never throws, so callers can inspect
+    # 400 bodies (untrusted certificate lists) and are never silently swallowing failures.
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]  [String]$Method,
+        [Parameter(Mandatory = $true)]  [String]$Uri,
+        [Parameter(Mandatory = $true)]  [Hashtable]$Headers,
+        [Parameter(Mandatory = $false)] [Object]$Body
+    )
+
+    $params = @{ Method = $Method; Uri = $Uri; Headers = $Headers; ErrorAction = 'Stop' }
+    if ($null -ne $Body) {
+        $params.Body = if ($Body -is [String]) { $Body } else { $Body | ConvertTo-Json -Depth 10 }
+    }
+    if ($PSEdition -eq 'Core') { $params.SkipCertificateCheck = $true }
+
+    try {
+        $response = Invoke-RestMethod @params
+        return @{ Ok = $true; Status = 200; Body = $response }
+    }
+    catch {
+        $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+        $text = $_.ErrorDetails.Message
+        if (-not $text -and $_.Exception.Response -and $_.Exception.Response.GetResponseStream) {
+            try { $text = (New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd() } catch {}
+        }
+        $parsed = $null
+        if ($text) { try { $parsed = $text | ConvertFrom-Json } catch { $parsed = $text } }
+        return @{ Ok = $false; Status = $status; Body = $parsed; Message = "$($_.Exception.Message) $text" }
+    }
+}
+
+function Find-OperationsCertificate {
+    # Recursively collects certificate objects (anything carrying a thumbprint) from a response body.
+    param ([Parameter(Mandatory = $false)] [Object]$Node)
+
+    if ($null -eq $Node -or $Node -is [String]) { return }
+    if ($Node -is [System.Collections.IEnumerable]) { foreach ($n in $Node) { Find-OperationsCertificate -Node $n }; return }
+    if ($Node.PSObject.Properties['thumbprint'] -and $Node.PSObject.Properties['certificateDetails']) { $Node; return }
+    foreach ($prop in $Node.PSObject.Properties) { Find-OperationsCertificate -Node $prop.Value }
+}
+
+function Get-OperationsAdapter {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]  [String]$Fqdn,
+        [Parameter(Mandatory = $true)]  [Hashtable]$Headers,
+        [Parameter(Mandatory = $false)] [String]$AdapterId,
+        [Parameter(Mandatory = $false)] [String]$AdapterKindKey
+    )
+
+    $uri = "https://$Fqdn/suite-api/api/adapters"
+    if ($AdapterId) { $uri += "/$AdapterId" }
+    elseif ($AdapterKindKey) { $uri += "?adapterKindKey=$AdapterKindKey" }
+
+    $r = Invoke-OperationsRest -Method GET -Uri $uri -Headers $Headers
+    if (-not $r.Ok) { Write-Warning "[!] Get-OperationsAdapter failed ($($r.Status)): $($r.Message)"; return @() }
+    if ($AdapterId) { return $r.Body } else { return $r.Body.adapterInstancesInfoDto }
+}
+
+function Get-OperationsAdapterName {
+    param ([Object]$Adapter)
+    if ($Adapter.resourceKey.name) { $Adapter.resourceKey.name } else { $Adapter.name }
+}
+
+function New-OperationsVcenterIntegrationPayload {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]  [String]$VcenterFqdn,
+        [Parameter(Mandatory = $true)]  [String]$CollectorGroupId,
+        [Parameter(Mandatory = $true)]  [String]$CredentialId,
+        [Parameter(Mandatory = $false)] [Object[]]$Certificates
+    )
+
+    # Mirrors the UI saveCloudAccount call: vCenter adapter plus its vSAN child.
+    $payload = [ordered]@{
+        "name"                = $VcenterFqdn
+        "description"         = "vCenter Adapter - $VcenterFqdn"
+        "collectorGroupId"    = $CollectorGroupId
+        "credentialInstanceId" = $CredentialId
+        "resourceIdentifiers" = @(
+            @{ "name" = "VCURL"; "value" = $VcenterFqdn },
+            @{ "name" = "AUTODISCOVERY"; "value" = "true" },
+            @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" }
+        )
+        "vsanConfig"          = @{ "enabled" = $true; "smartDataCollectionEnabled" = $false }
+    }
+    if ($Certificates) { $payload["certificates"] = @($Certificates) }
+    return $payload
+}
+
+function Start-OperationsAdapterCollection {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)] [String]$Fqdn,
+        [Parameter(Mandatory = $true)] [Hashtable]$Headers,
+        [Parameter(Mandatory = $true)] [String[]]$AdapterInstanceIds
+    )
+
+    # Creation never starts an adapter (the UI makes a separate startCloudAccountCollect call).
+    # Documented Suite API call: PUT /suite-api/api/adapters/{id}/monitoringstate/start (no body).
+    $allStarted = $true
+    foreach ($id in $AdapterInstanceIds) {
+        Write-Host "[+] Starting collection for adapter instance ID: $id..." -ForegroundColor Cyan
+        $r = Invoke-OperationsRest -Method PUT -Uri "https://$Fqdn/suite-api/api/adapters/$id/monitoringstate/start" -Headers $Headers
+        if ($r.Ok) {
+            Write-Host "[✓] Start requested for adapter ID: $id" -ForegroundColor Green
+        } else {
+            $allStarted = $false
+            Write-Host "[!] Failed to start adapter ID $id (HTTP $($r.Status)): $($r.Message)" -ForegroundColor Red
+        }
+    }
+    return $allStarted
+}
+
+
+function Add-VcenterAdapter {
+<#
+    .SYNOPSIS
+    Pure REST API automation for VCF Operations Cloud Account creation and collection activation.
+
+    .DESCRIPTION
+    The Add-VcenterAdapter cmdlet uses standard VCF / Aria Operations Suite API endpoints
+    (`/suite-api/api/...`) to authenticate, manage credentials, test & trust SSL certificates,
+    register vCenter cloud accounts, and start metric collection.
+
+    .EXAMPLE
+    Add-VcenterAdapter -VcfOpsFqdn "sfo-ops01.sfo.rainpole.io" `
+                       -Username "admin" `
+                       -Password "VMware1!" `
+                       -VcenterFqdn "sfo-w03-vc01.sfo.rainpole.io" `
+                       -VcenterUser "administrator@vsphere.local" `
+                       -VcenterPass "VMware1!"
+#>
+    [CmdletBinding()]
+    Param (
+        [Parameter(Mandatory = $false)] [String]$VcfOpsFqdn = "sfo-ops01.sfo.rainpole.io",
+        [Parameter(Mandatory = $false)] [String]$Username = "admin",
+        [Parameter(Mandatory = $false)] [String]$Password = "VMware1!",
+        [Parameter(Mandatory = $false)] [String]$VcenterFqdn = "sfo-w03-vc01.sfo.rainpole.io",
+        [Parameter(Mandatory = $false)] [String]$VcenterUser = "administrator@vsphere.local",
+        [Parameter(Mandatory = $false)] [String]$VcenterPass = "VMware1!",
+        [Parameter(Mandatory = $false)] [String]$CollectorGroupId = ""
+    )
+
+    if ($PSEdition -ne 'Core') {
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+    }
+
+    $cleanVcFqdn = $VcenterFqdn -replace '^https?://', '' -replace '/.*$', ''
+
+    Write-Host "================================================================================" -ForegroundColor Green
+    Write-Host "Starting Pure REST API VCF Operations Cloud Account Workflow" -ForegroundColor Green
+    Write-Host "VCF Operations Appliance : $VcfOpsFqdn" -ForegroundColor Green
+    Write-Host "Target vCenter           : $cleanVcFqdn" -ForegroundColor Green
+    Write-Host "================================================================================" -ForegroundColor Green
+
+    # 1. Acquire Ops Token
+    $opsToken = Request-OperationsToken -Fqdn $VcfOpsFqdn -Username $Username -Password $Password
+    $apiHeaders = @{
+        "Accept"        = "application/json"
+        "Content-Type"  = "application/json"
+        "Authorization" = "OpsToken $opsToken"
+    }
+
+    # 2. Get or Create Credential
+    $existingCreds = Get-OperationsCredential -Fqdn $VcfOpsFqdn -Headers $apiHeaders
+    $credObj = $existingCreds | Where-Object { $_.name -eq $cleanVcFqdn -or $_.name -eq $VcenterFqdn } | Select-Object -First 1
+
+    if (-not $credObj) {
+        $credObj = Add-OperationsCredential -Fqdn $VcfOpsFqdn -Headers $apiHeaders -CredentialName $cleanVcFqdn -User $VcenterUser -Pass $VcenterPass
+    } else {
+        Write-Host "[✓] Found existing credential for '$cleanVcFqdn' (ID: $($credObj.id))" -ForegroundColor Green
+    }
+    $credentialId = if ($credObj.id) { $credObj.id } else { $credObj.credentialInstances[0].id }
+
+    # 3. Resolve Collector Group
+    if ([String]::IsNullOrWhiteSpace($CollectorGroupId)) {
+        $collectors = Get-OperationsCollectorGroup -Fqdn $VcfOpsFqdn -Headers $apiHeaders
+        if ($collectors -and $collectors.Count -gt 0) {
+            $CollectorGroupId = if ($collectors[0].id) { $collectors[0].id } else { $collectors[0].collectorGroupId }
+        }
+    }
+    Write-Host "[✓] Using Collector Group ID: $CollectorGroupId" -ForegroundColor Green
+
+    # 4. Check if Adapter Exists or Create It
+    $matchesVc = { (Get-OperationsAdapterName $_) -in @($cleanVcFqdn, $VcenterFqdn) }
+    $adapterObj = Get-OperationsAdapter -Fqdn $VcfOpsFqdn -Headers $apiHeaders -AdapterKindKey "VMWARE" | Where-Object $matchesVc | Select-Object -First 1
+
+    if (-not $adapterObj) {
+        # 4a. Test connection first; vCenter's untrusted certificate is returned for acceptance
+        $payload = New-OperationsVcenterIntegrationPayload -VcenterFqdn $cleanVcFqdn -CollectorGroupId $CollectorGroupId -CredentialId $credentialId
+        $base = "https://$VcfOpsFqdn/suite-api/api/integrations/vcenters"
+
+        Write-Host "[+] Testing vCenter connection and certificate..." -ForegroundColor Cyan
+        $test = Invoke-OperationsRest -Method POST -Uri "$base/testConnection" -Headers $apiHeaders -Body $payload
+        $certs = @(Find-OperationsCertificate -Node $test.Body)
+        if (-not $test.Ok -and $certs.Count -eq 0) {
+            throw "vCenter testConnection failed (HTTP $($test.Status)): $($test.Message)"
+        }
+
+        # 4b. Create the integration, trusting the presented certificate(s) in the same call (as the UI does)
+        if ($certs.Count -gt 0) {
+            Write-Host "[+] Trusting $($certs.Count) vCenter SSL certificate(s)..." -ForegroundColor Cyan
+            $payload = New-OperationsVcenterIntegrationPayload -VcenterFqdn $cleanVcFqdn -CollectorGroupId $CollectorGroupId -CredentialId $credentialId -Certificates $certs
+        }
+        Write-Host "[+] Registering vCenter adapter in VCF Operations..." -ForegroundColor Cyan
+        $create = Invoke-OperationsRest -Method POST -Uri $base -Headers $apiHeaders -Body $payload
+        if (-not $create.Ok) { throw "Failed to create vCenter integration (HTTP $($create.Status)): $($create.Message)" }
+
+        $adapterObj = Get-OperationsAdapter -Fqdn $VcfOpsFqdn -Headers $apiHeaders -AdapterKindKey "VMWARE" | Where-Object $matchesVc | Select-Object -First 1
+        if (-not $adapterObj) { throw "vCenter integration was created but the adapter instance could not be found." }
+    } else {
+        Write-Host "[✓] Found existing vCenter adapter for '$cleanVcFqdn' (ID: $($adapterObj.id))" -ForegroundColor Green
+    }
+
+    $adapterId = $adapterObj.id
+
+    # 5. Collect the adapter IDs to start: the vCenter adapter plus its vSAN child (UI uses withChildren=true)
+    $adapterIdsToStart = @($adapterId)
+    $vsanAdapter = Get-OperationsAdapter -Fqdn $VcfOpsFqdn -Headers $apiHeaders -AdapterKindKey "VirtualAndPhysicalSANAdapter" |
+        Where-Object { (Get-OperationsAdapterName $_) -like "$cleanVcFqdn*" } | Select-Object -First 1
+    if ($vsanAdapter) { $adapterIdsToStart += $vsanAdapter.id }
+
+    # 6. Enable Metric Collection (creation leaves the adapters Stopped / Not Collecting)
+    $started = Start-OperationsAdapterCollection -Fqdn $VcfOpsFqdn -Headers $apiHeaders -AdapterInstanceIds $adapterIdsToStart
+    if (-not $started) { throw "One or more adapters could not be started; see errors above." }
+
+    Write-Host "`n================================================================================" -ForegroundColor Green
+    Write-Host "✅ Pure API Workflow Completed Successfully for $cleanVcFqdn" -ForegroundColor Green
+    Write-Host "================================================================================" -ForegroundColor Green
+
+    return [PSCustomObject]@{
+        AdapterID    = $adapterId
+        CredentialID = $credentialId
+        CollectorID  = $CollectorGroupId
+    }
+
 }
 
 function Request-LicenseServerOTK {
@@ -1920,7 +1385,7 @@ Try {
             Request-OperationsToken -fqdn $jsonInput.operations.master.fqdn -username admin -password $jsonInput.operations.adminPassword
             Set-EulaSetting # Accept the EULA
             Set-CeipSetting -status DISABLED # Disable the CEIP setting
-            Add-VcenterAdapter -fqdn $jsonInput.vcenter.fqdn -username $jsonInput.vcenter.username -password $jsonInput.vcenter.password # Add the vCenter Server adapter to VCF Operations and start collection
+            Add-VcenterAdapter -VcfOpsFqdn $jsonInput.operations.master.fqdn -Username "admin" -Password $jsonInput.operations.adminPassword -VcenterFqdn $jsonInput.vcenter.fqdn -VcenterUser $jsonInput.vcenter.username -VcenterPass $jsonInput.vcenter.password
 
             # Deploy and Register a License Server
             Request-LicenseServerOTK # Request a one time key (OTK) for the registration of the License Server with VCF Operations
