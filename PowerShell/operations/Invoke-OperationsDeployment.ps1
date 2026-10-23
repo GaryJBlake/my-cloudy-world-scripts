@@ -1043,26 +1043,13 @@ Function Set-OperationsAdapter {
             $operationsHeaders.Add("Content-Type", "application/json")
         }
 
-        $attempts = @()
+        $lastError = ""
 
-        # Build list of candidate endpoints for updating/saving adapter configuration
-        $endpoints = @()
+        # 1. Try PUT /suite-api/api/adapters/$adapterId (Direct adapter update by ID)
         if (-not [string]::IsNullOrWhiteSpace($adapterId)) {
-            $endpoints += @(
-                @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId" },
-                @{ Method = 'PATCH'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId" }
-            )
-        }
-        $endpoints += @(
-            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters" },
-            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/adapters" },
-            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" },
-            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" }
-        )
-
-        foreach ($ep in $endpoints) {
             try {
-                $response = Invoke-RestMethod -Method $ep.Method -Uri $ep.Uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
+                $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId"
+                $response = Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
                 return $response
             } catch {
                 $err = $_.Exception.Message
@@ -1074,89 +1061,158 @@ Function Set-OperationsAdapter {
                         if ($b) { $err = $b }
                     } catch {}
                 }
-                $attempts += "$($ep.Method) $($ep.Uri) => $err"
+                $lastError = "PUT $uri failed: $err"
             }
         }
 
-        Write-Error "Set-OperationsAdapter failed on all endpoints:`n$($attempts -join "`n")"
+        # 2. Try PUT /suite-api/api/adapters (Bulk/collection adapter update)
+        try {
+            $uri = "https://$operationsAppliance/suite-api/api/adapters"
+            $response = Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
+            return $response
+        } catch {
+            $err = $_.Exception.Message
+            if ($_.Exception.Response) {
+                try {
+                    $s = $_.Exception.Response.GetResponseStream()
+                    $r = New-Object System.IO.StreamReader($s)
+                    $b = $r.ReadToEnd()
+                    if ($b) { $err = $b }
+                } catch {}
+            }
+            $lastError = "PUT $uri failed: $err"
+        }
+
+        # 3. Try PUT /suite-api/api/integrations/vcenters/$adapterId
+        if (-not [string]::IsNullOrWhiteSpace($adapterId)) {
+            try {
+                $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters/$adapterId"
+                $response = Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
+                return $response
+            } catch {
+                $err = $_.Exception.Message
+                if ($_.Exception.Response) {
+                    try {
+                        $s = $_.Exception.Response.GetResponseStream()
+                        $r = New-Object System.IO.StreamReader($s)
+                        $b = $r.ReadToEnd()
+                        if ($b) { $err = $b }
+                    } catch {}
+                }
+                $lastError = "PUT $uri failed: $err"
+            }
+        }
+
+        Write-Error "Set-OperationsAdapter failed: $lastError"
     } Catch {
         Write-Error "Set-OperationsAdapter error: $($_.Exception.Message)"
     }
 }
 
-Function Start-OperationsAdapter {
+Function Start-OperationsAdapterCollection {
     <#
         .SYNOPSIS
-        Starts collection of adapter.
+        Starts collection / enables monitoring for adapter instance(s) via the VCF Operations Suite API.
 
         .DESCRIPTION
-        The Start-OperationsAdapter cmdlet starts the collection of an adapter in VCF Operations
+        Attempts standard VCF Operations REST API endpoints to transition adapter instance monitoring 
+        state to ON/STARTED using OpsToken authorization ($Global:operationsHeaders).
 
         .EXAMPLE
-        Start-OperationsAdapter -adapterId <id>
-        This example starts the adapter by id.
+        Start-OperationsAdapterCollection -adapterInstanceIds "7ef2cb90-864a-43fc-aec9-40bf40f89c66"
 
-        .PARAMETER adapterId
-        The ID of the adapter to start.
+        .EXAMPLE
+        Start-OperationsAdapterCollection -adapterInstanceIds @("guid-1", "guid-2")
+
+        .EXAMPLE
+        "7ef2cb90-864a-43fc-aec9-40bf40f89c66" | Start-OperationsAdapterCollection
+
+        .PARAMETER adapterInstanceIds
+        One or more adapter instance GUIDs to start collection for. Accepts single string, array, or pipeline input.
     #>
-
+    [CmdletBinding()]
     Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$adapterId
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        [ValidateNotNullOrEmpty()]
+        [String[]]$adapterInstanceIds
     )
 
-    Try {
-        Write-Host "[+] Starting collection for adapter instance: $adapterId" -ForegroundColor Cyan
+    Process {
+        # Format array of IDs for collection body endpoints
+        $idArray = @($adapterInstanceIds)
 
-        $started = $false
-        $lastError = ""
+        foreach ($id in $idArray) {
+            Try {
+                Write-Host "[+] Starting collection for adapter instance: $id" -ForegroundColor Cyan
 
-        $endpoints = @(
-            @{ Method = 'PUT'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/ON"; Body = $null },
-            @{ Method = 'PUT'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"; Body = $null },
-            @{ Method = 'PUT'; Uri = "https://$operationsAppliance/suite-api/api/adapters/monitoringstate/ON"; Body = (@{ adapterInstanceId = @($adapterId) } | ConvertTo-Json) },
-            @{ Method = 'PUT'; Uri = "https://$operationsAppliance/suite-api/api/adapters/monitoringstate/start"; Body = (@{ adapterInstanceId = @($adapterId) } | ConvertTo-Json) },
-            @{ Method = 'POST'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/ON"; Body = $null },
-            @{ Method = 'POST'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId/monitoringstate/start"; Body = $null }
-        )
-
-        foreach ($ep in $endpoints) {
-            try {
-                $params = @{
-                    Method               = $ep.Method
-                    Uri                  = $ep.Uri
-                    Headers              = $operationsHeaders
-                    SkipCertificateCheck = $true
-                    ErrorAction          = 'Stop'
-                }
-                if ($ep.Body) {
-                    $params['Body'] = $ep.Body
-                    $params['ContentType'] = 'application/json'
+                # Ensure Content-Type header is set
+                if (-not $Global:operationsHeaders.ContainsKey("Content-Type")) {
+                    $Global:operationsHeaders.Add("Content-Type", "application/json")
                 }
 
-                Invoke-RestMethod @params | Out-Null
-                $started = $true
-                break
-            } catch {
-                $err = $_.Exception.Message
-                if ($_.Exception.Response) {
+                $started = $false
+                $attempts = @()
+
+                # Candidate REST endpoints for starting adapter monitoring state
+                $endpoints = @(
+                    # 1. Bulk POST with state in URL
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/STARTED"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
+                    
+                    # 2. Direct ID POST/PUT endpoints
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/ON"; Body = $null },
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/start"; Body = $null },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/ON"; Body = $null },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/start"; Body = $null },
+
+                    # 3. Bulk POST/PUT with monitoringState property in body
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Body = (@{ adapterInstanceId = @($id); monitoringState = "ON" } | ConvertTo-Json) },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Body = (@{ adapterInstanceId = @($id); monitoringState = "ON" } | ConvertTo-Json) },
+
+                    # 4. Integrations API endpoint
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/monitoringstate/ON"; Body = $null }
+                )
+
+                foreach ($ep in $endpoints) {
                     try {
-                        $stream = $_.Exception.Response.GetResponseStream()
-                        $reader = New-Object System.IO.StreamReader($stream)
-                        $respBody = $reader.ReadToEnd()
-                        if ($respBody) { $err = $respBody }
-                    } catch {}
+                        $params = @{
+                            Method               = $ep.Method
+                            Uri                  = $ep.Uri
+                            Headers              = $Global:operationsHeaders
+                            SkipCertificateCheck = $true
+                            ErrorAction          = 'Stop'
+                        }
+                        if ($ep.Body) {
+                            $params['Body'] = $ep.Body
+                        }
+
+                        Invoke-RestMethod @params | Out-Null
+                        $started = $true
+                        break
+                    } catch {
+                        $err = $_.Exception.Message
+                        if ($_.Exception.Response) {
+                            try {
+                                $stream = $_.Exception.Response.GetResponseStream()
+                                $reader = New-Object System.IO.StreamReader($stream)
+                                $respBody = $reader.ReadToEnd()
+                                if ($respBody) { $err = $respBody }
+                            } catch {}
+                        }
+                        $attempts += "$($ep.Method) $($ep.Uri) => $err"
+                    }
                 }
-                $lastError = "$($ep.Method) $($ep.Uri) returned: $err"
+
+                if ($started) {
+                    Write-Host "[✓] Adapter collection started successfully for ID: $id" -ForegroundColor Green
+                } else {
+                    Write-Error "Failed to start collection for adapter (${id}) across all endpoints:`n$($attempts -join "`n")"
+                }
+
+            } Catch {
+                Write-Error "Failed to start collection for adapter (${id}): $($_.Exception.Message)"
             }
         }
-
-        if ($started) {
-            Write-Host "[✓] Adapter collection started successfully" -ForegroundColor Green
-        } else {
-            Write-Error "Failed to start Operations adapter (${adapterId}): $lastError"
-        }
-    } Catch {
-        Write-Error "Failed to start Operations adapter (${adapterId}): $($_.Exception.Message)"
     }
 }
 
@@ -1289,7 +1345,7 @@ function Add-VcenterAdapter {
             }
 
             Start-Sleep -Seconds 5
-            Start-OperationsAdapter -adapterId $finalAdapter.id
+            Start-OperationsAdapterCollection -adapterInstanceIds $finalAdapter.id
             Write-Host "[✓] Added and registered vCenter adapter in VCF Operations successfully" -ForegroundColor Green
         } else {
             Write-Host "[x] Adding vCenter adapter to VCF Operations failed" -ForegroundColor Red
