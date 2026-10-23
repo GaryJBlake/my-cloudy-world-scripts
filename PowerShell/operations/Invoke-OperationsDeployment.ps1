@@ -1043,13 +1043,26 @@ Function Set-OperationsAdapter {
             $operationsHeaders.Add("Content-Type", "application/json")
         }
 
-        $lastError = ""
+        $attempts = @()
 
-        # 1. Try PUT /suite-api/api/adapters/$adapterId (Direct adapter update by ID)
+        # Build list of candidate endpoints for updating/saving adapter configuration
+        $endpoints = @()
         if (-not [string]::IsNullOrWhiteSpace($adapterId)) {
+            $endpoints += @(
+                @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId" },
+                @{ Method = 'PATCH'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId" }
+            )
+        }
+        $endpoints += @(
+            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters" },
+            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/adapters" },
+            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" },
+            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" }
+        )
+
+        foreach ($ep in $endpoints) {
             try {
-                $uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId"
-                $response = Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
+                $response = Invoke-RestMethod -Method $ep.Method -Uri $ep.Uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
                 return $response
             } catch {
                 $err = $_.Exception.Message
@@ -1061,49 +1074,11 @@ Function Set-OperationsAdapter {
                         if ($b) { $err = $b }
                     } catch {}
                 }
-                $lastError = "PUT $uri failed: $err"
+                $attempts += "$($ep.Method) $($ep.Uri) => $err"
             }
         }
 
-        # 2. Try PUT /suite-api/api/adapters (Bulk/collection adapter update)
-        try {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters"
-            $response = Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-            return $response
-        } catch {
-            $err = $_.Exception.Message
-            if ($_.Exception.Response) {
-                try {
-                    $s = $_.Exception.Response.GetResponseStream()
-                    $r = New-Object System.IO.StreamReader($s)
-                    $b = $r.ReadToEnd()
-                    if ($b) { $err = $b }
-                } catch {}
-            }
-            $lastError = "PUT $uri failed: $err"
-        }
-
-        # 3. Try PUT /suite-api/api/integrations/vcenters/$adapterId
-        if (-not [string]::IsNullOrWhiteSpace($adapterId)) {
-            try {
-                $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters/$adapterId"
-                $response = Invoke-RestMethod -Method 'PUT' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-                return $response
-            } catch {
-                $err = $_.Exception.Message
-                if ($_.Exception.Response) {
-                    try {
-                        $s = $_.Exception.Response.GetResponseStream()
-                        $r = New-Object System.IO.StreamReader($s)
-                        $b = $r.ReadToEnd()
-                        if ($b) { $err = $b }
-                    } catch {}
-                }
-                $lastError = "PUT $uri failed: $err"
-            }
-        }
-
-        Write-Error "Set-OperationsAdapter failed: $lastError"
+        Write-Error "Set-OperationsAdapter failed on all endpoints:`n$($attempts -join "`n")"
     } Catch {
         Write-Error "Set-OperationsAdapter error: $($_.Exception.Message)"
     }
