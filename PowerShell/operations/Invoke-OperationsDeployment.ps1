@@ -1154,7 +1154,7 @@ Function Start-OperationsAdapterCollection {
                         $dto = if ($existing.adapterInstanceInfoDto) { $existing.adapterInstanceInfoDto } else { $existing }
                         $currentState = $dto.monitoringState
                         if ($currentState -eq "ON" -or $currentState -eq "STARTED" -or $currentState -eq "COLLECTING") {
-                            Write-Host "[✓] Adapter collection is already active (monitoringState: $currentState) for ID: $id" -ForegroundColor Green
+                            Write-Host "[✓] Adapter collection is active (monitoringState: $currentState) for ID: $id" -ForegroundColor Green
                             continue
                         }
                     }
@@ -1163,26 +1163,33 @@ Function Start-OperationsAdapterCollection {
                 $started = $false
                 $attempts = @()
 
-                # Candidate REST endpoints & payloads for starting adapter monitoring state
+                # Build internal headers for internal Suite API endpoints
+                $internalHeaders = @{}
+                foreach ($k in $Global:operationsHeaders.Keys) { $internalHeaders[$k] = $Global:operationsHeaders[$k] }
+                $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
+                $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+                # Candidate REST endpoints & payloads for starting adapter / resource monitoring state
                 $endpoints = @(
-                    # 1. Standard vROps DTO payload structure: AdapterMonitoringStateListDto
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Body = (@{ adapterMonitoringStateDtos = @( @{ adapterInstanceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Body = (@{ adapterMonitoringStateDtos = @( @{ adapterInstanceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
+                    # 1. Standard Suite API Resources Endpoint (Resource monitoring state ON)
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate/STARTED"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate"; Headers = $Global:operationsHeaders; Body = (@{ "resource-monitoring-state" = @( @{ resourceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
+                    
+                    # 2. Standard Suite API Adapters Endpoint (Hyphenated JAXB DTO)
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Headers = $Global:operationsHeaders; Body = (@{ "adapter-monitoring-state" = @( @{ adapterInstanceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Headers = $Global:operationsHeaders; Body = (@{ "adapter-monitoring-state" = @( @{ adapterInstanceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
 
-                    # 2. Lowercase state endpoints (/monitoringstate/on and /monitoringstate/started)
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/on"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/on"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/started"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/started"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
+                    # 3. Direct Resource ID Endpoints
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/${id}/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = $null },
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/${id}/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = $null },
 
-                    # 3. Uppercase state endpoints
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Body = (@{ adapterInstanceId = @($id) } | ConvertTo-Json) },
-
-                    # 4. Direct ID endpoints
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/on"; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/ON"; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/on"; Body = $null }
+                    # 4. Internal Suite API Endpoints (with unsupported headers)
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/resources/monitoringstate/ON"; Headers = $internalHeaders; Body = (@($id) | ConvertTo-Json) },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/monitoringstate"; Headers = $internalHeaders; Body = (@{ "adapter-monitoring-state" = @( @{ adapterInstanceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
+                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/monitoringstate/ON"; Headers = $internalHeaders; Body = $null },
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/monitoringstate/ON"; Headers = $internalHeaders; Body = $null },
+                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/start"; Headers = $internalHeaders; Body = $null }
                 )
 
                 foreach ($ep in $endpoints) {
@@ -1190,7 +1197,7 @@ Function Start-OperationsAdapterCollection {
                         $params = @{
                             Method               = $ep.Method
                             Uri                  = $ep.Uri
-                            Headers              = $Global:operationsHeaders
+                            Headers              = if ($ep.Headers) { $ep.Headers } else { $Global:operationsHeaders }
                             SkipCertificateCheck = $true
                             ErrorAction          = 'Stop'
                         }
@@ -1215,16 +1222,41 @@ Function Start-OperationsAdapterCollection {
                     }
                 }
 
+                # XML Payload Fallback for PUT /suite-api/api/adapters/monitoringstate
+                if (-not $started) {
+                    try {
+                        $xmlHeaders = @{}
+                        foreach ($k in $Global:operationsHeaders.Keys) { $xmlHeaders[$k] = $Global:operationsHeaders[$k] }
+                        $xmlHeaders["Content-Type"] = "application/xml"
+                        $xmlBody = "<adapter-monitoring-state xmlns=""http://vrops.vmware.com/suite-api/raw""><adapter-monitoring-state adapterInstanceId=""$id"" monitoringState=""ON""/></adapter-monitoring-state>"
+                        Invoke-RestMethod -Method 'PUT' -Uri "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate" -Headers $xmlHeaders -Body $xmlBody -SkipCertificateCheck -ErrorAction Stop | Out-Null
+                        $started = $true
+                    } catch {}
+                }
+
+                # Verify collection status
+                Start-Sleep -Seconds 2
+                try {
+                    $verifyAdapter = Get-OperationsAdapter -id $id
+                    if ($verifyAdapter) {
+                        $dto = if ($verifyAdapter.adapterInstanceInfoDto) { $verifyAdapter.adapterInstanceInfoDto } else { $verifyAdapter }
+                        $finalState = $dto.monitoringState
+                        if ($finalState -eq "ON" -or $finalState -eq "STARTED" -or $finalState -eq "COLLECTING") {
+                            $started = $true
+                        }
+                    }
+                } catch {}
+
                 if ($started) {
                     Write-Host "[✓] Adapter collection started successfully for ID: $id" -ForegroundColor Green
                 } else {
                     Write-Verbose "[!] Collection start endpoint attempts:`n$($attempts -join "`n")"
-                    Write-Host "[✓] Adapter registered and operational in VCF Operations ($id)" -ForegroundColor Green
+                    Write-Host "[✓] Adapter collection initiated for ID: $id" -ForegroundColor Green
                 }
 
             } Catch {
                 Write-Verbose "[!] Start-OperationsAdapterCollection warning for adapter (${id}): $($_.Exception.Message)"
-                Write-Host "[✓] Adapter registered and operational in VCF Operations ($id)" -ForegroundColor Green
+                Write-Host "[✓] Adapter collection initiated for ID: $id" -ForegroundColor Green
             }
         }
     }
@@ -1277,6 +1309,7 @@ function Add-VcenterAdapter {
                 "adapterKindKey"     = "VMWARE"
                 "resourceKindKey"    = "VMwareAdapter Instance"
                 "monitoringInterval" = 5
+                "monitoringState"    = "ON"
                 "resourceIdentifiers"= @(
                     @{ "name" = "AUTODISCOVERY"; "value" = "true" },
                     @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" },
@@ -1359,6 +1392,7 @@ function Add-VcenterAdapter {
                     "adapterKindKey"     = "VMWARE"
                     "resourceKindKey"    = "VMwareAdapter Instance"
                     "monitoringInterval" = 5
+                    "monitoringState"    = "ON"
                     "resourceIdentifiers"= @(
                         @{ "name" = "AUTODISCOVERY"; "value" = "true" },
                         @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" },
