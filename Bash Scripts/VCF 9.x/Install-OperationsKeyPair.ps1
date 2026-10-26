@@ -3,11 +3,12 @@
     Uploads a combined keypair .pem file to VCF Operations License Manager via REST API.
 
 .DESCRIPTION
-    This function automates the following steps:
+    This function automates the following steps in PowerShell Core (PS 7+):
     1. Verifies that the provided combined keypair .pem file exists locally.
-    2. Authenticates with the VCF Operations Suite API to acquire an access token.
-    3. Uploads the keypair .pem file to VCF Operations via POST /suite-api/api/internal/license-manager/identity/keypair.
-    4. Optionally verifies the registration status via GET /suite-api/api/internal/license-manager/registration/status.
+    2. Normalizes PEM formatting (5-dash headers, LF line breaks, UTF-8 without BOM).
+    3. Authenticates with the VCF Operations Suite API to acquire an access token.
+    4. Uploads the keypair .pem file to VCF Operations via POST /suite-api/api/internal/license-manager/identity/keypair.
+    5. Optionally verifies the registration status via GET /suite-api/api/internal/license-manager/registration/status.
 
 .PARAMETER VcfOpsHost
     The FQDN or IP address of the VCF Operations instance (e.g., vcf-ops.domain.com).
@@ -51,14 +52,6 @@ function Install-OperationsKeyPair {
         [Parameter(Mandatory = $false)]
         [switch]$SkipCertificateCheck
     )
-
-    begin {
-        if ($SkipCertificateCheck) {
-            # Configure SSL / TLS bypass across all PowerShell sessions
-            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls11 -bor [System.Net.SecurityProtocolType]::Tls
-        }
-    }
 
     process {
         try {
@@ -143,7 +136,7 @@ function Install-OperationsKeyPair {
                 Body        = $authBody
                 WebSession  = $webSession
             }
-            if ($SkipCertificateCheck -and $PSVersionTable.PSVersion.Major -ge 6) {
+            if ($SkipCertificateCheck) {
                 $splatAuth['SkipCertificateCheck'] = $true
             }
 
@@ -174,21 +167,23 @@ function Install-OperationsKeyPair {
                 "https://$VcfOpsHost/suite-api/internal/license-manager/identity/keypair"
             )
 
+            # Candidate form field keys expected by backend API (Spring controller)
+            $candidateFormKeys = @("file", "keypair", "keyPair")
+
             $uploadSuccess = $false
             $uploadResult = $null
             $lastUploadError = $null
 
             foreach ($uploadUrl in $candidateUploadUrls) {
-                Write-Verbose "Attempting upload to URL: $uploadUrl"
-                try {
-                    if ($PSVersionTable.PSVersion.Major -ge 6) {
-                        # PowerShell 6+ (PowerShell Core / PS7): Use native Invoke-RestMethod -Form and -WebSession
+                foreach ($formKey in $candidateFormKeys) {
+                    Write-Verbose "Attempting upload to URL: $uploadUrl (Form field: $formKey)"
+                    try {
                         $splatUpload = @{
                             Uri        = $uploadUrl
                             Method     = 'Post'
                             Headers    = $authHeaders
                             Form       = @{
-                                file = Get-Item -Path $uploadPemPath
+                                $formKey = Get-Item -Path $uploadPemPath
                             }
                             WebSession = $webSession
                         }
@@ -197,63 +192,24 @@ function Install-OperationsKeyPair {
                         }
 
                         $uploadResult = Invoke-RestMethod @splatUpload
-                    } else {
-                        # Windows PowerShell 5.1: Use HttpClient
-                        $handler = New-Object System.Net.Http.HttpClientHandler
-
-                        $httpClient = New-Object System.Net.Http.HttpClient($handler)
-                        $httpClient.DefaultRequestHeaders.Add("Authorization", "vRealizeOpsToken $token")
-                        $httpClient.DefaultRequestHeaders.Add("vRealizeOpsToken", $token)
-                        $httpClient.DefaultRequestHeaders.Add("X-vRealizeOps-API-use-internal", "true")
-                        $httpClient.DefaultRequestHeaders.Add("X-Ops-API-use-unsupported", "true")
-                        $httpClient.DefaultRequestHeaders.Add("Accept", "application/json, text/plain, */*")
-
-                        if ($webSession.Cookies.Count -gt 0) {
-                            $cookieContainer = New-Object System.Net.CookieContainer
-                            foreach ($cookie in $webSession.Cookies.GetCookies([System.Uri]$uploadUrl)) {
-                                $cookieContainer.Add($cookie)
-                            }
-                            $handler.CookieContainer = $cookieContainer
-                        }
-
-                        $multipartContent = New-Object System.Net.Http.MultipartFormDataContent
-                        $fileBytes = [System.IO.File]::ReadAllBytes($uploadPemPath)
-                        $byteArrayContent = New-Object System.Net.Http.ByteArrayContent(,$fileBytes)
-                        $byteArrayContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/x-pem-file")
-                        
-                        $fileName = [System.IO.Path]::GetFileName($uploadPemPath)
-                        $multipartContent.Add($byteArrayContent, "file", $fileName)
-
-                        $responseTask = $httpClient.PostAsync($uploadUrl, $multipartContent)
-                        $responseTask.Wait()
-                        $response = $responseTask.Result
-
-                        $httpClient.Dispose()
-
-                        if (-not $response.IsSuccessStatusCode) {
-                            $errorResponse = $response.Content.ReadAsStringAsync().Result
-                            throw "Upload failed with status code $($response.StatusCode): $errorResponse"
-                        }
-
-                        $uploadResult = $response.Content.ReadAsStringAsync().Result
+                        $uploadSuccess = $true
+                        Write-Host "[✓] Key pair successfully uploaded to VCF Operations!" -ForegroundColor Green
+                        break
                     }
-
-                    $uploadSuccess = $true
-                    Write-Host "[✓] Key pair successfully uploaded to VCF Operations!" -ForegroundColor Green
-                    break
-                }
-                catch {
-                    $lastUploadError = $_
-                    if ($_.Exception.Response) {
-                        try {
-                            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
-                            $resBody = $reader.ReadToEnd()
-                            $reader.Close()
-                            if ($resBody) { $lastUploadError = $resBody }
-                        } catch {}
+                    catch {
+                        $lastUploadError = $_
+                        if ($_.Exception.Response) {
+                            try {
+                                $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                                $resBody = $reader.ReadToEnd()
+                                $reader.Close()
+                                if ($resBody) { $lastUploadError = $resBody }
+                            } catch {}
+                        }
+                        Write-Verbose "Upload to '$uploadUrl' with form field '$formKey' failed: $lastUploadError"
                     }
-                    Write-Verbose "Upload to '$uploadUrl' failed: $lastUploadError"
                 }
+                if ($uploadSuccess) { break }
             }
 
             if (-not $uploadSuccess) {
@@ -281,7 +237,7 @@ function Install-OperationsKeyPair {
                             Headers    = $authHeaders
                             WebSession = $webSession
                         }
-                        if ($SkipCertificateCheck -and $PSVersionTable.PSVersion.Major -ge 6) {
+                        if ($SkipCertificateCheck) {
                             $splatStatus['SkipCertificateCheck'] = $true
                         }
 
