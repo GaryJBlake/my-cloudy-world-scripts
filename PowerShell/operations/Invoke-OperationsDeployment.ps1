@@ -104,7 +104,7 @@ function Deploy-VCFOperationsAppliance {
 
         if ($existingVm) {
             # Warn and skip import
-            Write-Host "[!] VM '$($jsonInput.operations.master.fqdn -replace '\..*$', '')' already exists on this vCenter. Skipping OVA import" -ForegroundColor Yellow
+            Write-Host "[!] Found existing Virtual Machine '$($jsonInput.operations.master.fqdn -replace '\..*$', '')' in this vCenter. Skipping OVA import" -ForegroundColor Yellow
             $importedVm = $existingVm
         } 
         else {
@@ -142,7 +142,7 @@ function Deploy-VCFOperationsAppliance {
             Write-Host "[+] Powering on VM '$($jsonInput.operations.master.fqdn -replace '\..*$', '')'..." -ForegroundColor Cyan
             $importedVm = Start-VM -VM $importedVm -Confirm:$false -ErrorAction Stop
         } else {
-            Write-Host "[!] VM '$($jsonInput.operations.master.fqdn -replace '\..*$', '')' is already powered on" -ForegroundColor Yellow
+            Write-Host "[!] Virtual Machine '$($jsonInput.operations.master.fqdn -replace '\..*$', '')' is already powered on" -ForegroundColor Yellow
         }
 
         # 5. Polling Loop with Timeout for Valid IPv4 Address
@@ -178,7 +178,7 @@ function Deploy-VCFOperationsAppliance {
 
         # 6. Final Status Check
         if ($validIp) {
-            Write-Host "[✓] VM '$($jsonInput.operations.master.fqdn -replace '\..*$', '')' is powered on and reachable at IP: $validIp" -ForegroundColor Green
+            Write-Host "[✓] Virtual Machine '$($jsonInput.operations.master.fqdn -replace '\..*$', '')' is powered on and reachable at IP: $validIp" -ForegroundColor Green
         } else {
             Write-Warning "[!] Timed out after $TimeoutMinutes minutes waiting for a valid IP address."
             Write-Warning "    - Check if VMware Tools booted properly inside the guest OS."
@@ -537,7 +537,7 @@ function Set-EulaSetting {
         $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
 
         Invoke-RestMethod -Method POST `
-            -Uri "https://${operationsAppliance}/suite-api/internal/deployment/config/properties/java_util_HashSet" `
+            -Uri "https://${operationsFqdn}/suite-api/internal/deployment/config/properties/java_util_HashSet" `
             -Headers $internalHeaders `
             -Body $jsonBody `
             -ContentType "application/json" `
@@ -582,7 +582,7 @@ function Set-CeipSetting {
         $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
 
         Invoke-RestMethod -Method POST `
-            -Uri "https://${operationsAppliance}/suite-api/internal/deployment/config/properties/java_util_HashSet" `
+            -Uri "https://${operationsFqdn}/suite-api/internal/deployment/config/properties/java_util_HashSet" `
             -Headers $internalHeaders `
             -Body $jsonPropBody `
             -ContentType "application/json" `
@@ -591,7 +591,7 @@ function Set-CeipSetting {
 
         # 2. Configure global telemetry status (Enabled/Disabled)
         $telemetrySetting = Invoke-RestMethod -Method GET `
-            -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED" `
+            -Uri "https://${operationsFqdn}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED" `
             -Headers $operationsHeaders `
             -SkipCertificateCheck `
             -ErrorAction SilentlyContinue
@@ -600,7 +600,7 @@ function Set-CeipSetting {
             # Endpoint variation 1: PUT URL path setting
             try {
                 Invoke-RestMethod -Method PUT `
-                    -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED/${setting}" `
+                    -Uri "https://${operationsFqdn}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED/${setting}" `
                     -Headers $operationsHeaders `
                     -SkipCertificateCheck `
                     -ErrorAction SilentlyContinue | Out-Null
@@ -613,7 +613,7 @@ function Set-CeipSetting {
                     } | ConvertTo-Json -Depth 5
 
                     Invoke-RestMethod -Method PUT `
-                        -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings" `
+                        -Uri "https://${operationsFqdn}/suite-api/api/deployment/config/globalsettings" `
                         -Headers $operationsHeaders `
                         -Body $telemetryBody `
                         -ContentType "application/json" `
@@ -638,8 +638,9 @@ function Request-OperationsToken {
         [Parameter(Mandatory = $true)] [String]$Password
     )
 
-    Write-Host "[+] Acquiring VCF Operations API token from '$Fqdn'..." -ForegroundColor Cyan
-    $uri = "https://$Fqdn/suite-api/api/auth/token/acquire"
+    $Global:operationsFqdn = $Fqdn
+    Write-Host "[+] Acquiring VCF Operations API token from '$operationsFqdn'..." -ForegroundColor Cyan
+    $uri = "https://$operationsFqdn/suite-api/api/auth/token/acquire"
     $headers = @{
         "Accept"       = "application/json"
         "Content-Type" = "application/json"
@@ -658,32 +659,32 @@ function Request-OperationsToken {
         }
 
         if ($response.token) {
-            Write-Host "[✓] Successfully acquired OpsToken" -ForegroundColor Green
-            return $response.token
+            Write-Host "[✓] Successfully acquired VCF Operations API token from '$operationsFqdn'" -ForegroundColor Green
+            $operationsToken = $response.token
+            $Global:operationsHeaders = @{
+                "Accept"        = "application/json"
+                "Content-Type"  = "application/json"
+                "Authorization" = "OpsToken $operationsToken"
+            }
+            #return $response.token | Out-Null
         } else {
             throw "Token empty in response"
         }
     }
     catch {
-        Write-Error "Failed to acquire OpsToken: $_"
+        Write-Error "Failed to acquire VCF Operations API token from '${operationsFqdn}': $_"
         throw
     }
 }
 
 function Get-OperationsCredential {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)] [String]$Fqdn,
-        [Parameter(Mandatory = $true)] [Hashtable]$Headers
-    )
-
     Write-Host "[+] Querying credentials in VCF Operations..." -ForegroundColor Cyan
-    $uri = "https://$Fqdn/suite-api/api/credentials"
+
     try {
         if ($PSEdition -eq 'Core') {
-            $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $Headers -SkipCertificateCheck -ErrorAction Stop
+            $response = Invoke-RestMethod -Method GET -Uri "https://${operationsFqdn}/suite-api/api/credentials" -Headers $operationsHeaders -SkipCertificateCheck -ErrorAction Stop
         } else {
-            $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $Headers -ErrorAction Stop
+            $response = Invoke-RestMethod -Method GET -Uri "https://${operationsFqdn}/suite-api/api/credentials" -Headers $operationsHeaders -ErrorAction Stop
         }
         return $response.credentialInstances
     }
@@ -696,15 +697,12 @@ function Get-OperationsCredential {
 function Add-OperationsCredential {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true)] [String]$Fqdn,
-        [Parameter(Mandatory = $true)] [Hashtable]$Headers,
         [Parameter(Mandatory = $true)] [String]$CredentialName,
         [Parameter(Mandatory = $true)] [String]$User,
         [Parameter(Mandatory = $true)] [String]$Pass
     )
 
     Write-Host "[+] Creating credential '$CredentialName' in VCF Operations..." -ForegroundColor Cyan
-    $uri = "https://$Fqdn/suite-api/api/credentials"
     $body = @{
         "name"              = $CredentialName
         "adapterKindKey"    = "VMWARE"
@@ -717,9 +715,9 @@ function Add-OperationsCredential {
 
     try {
         if ($PSEdition -eq 'Core') {
-            $response = Invoke-RestMethod -Method POST -Uri $uri -Headers $Headers -Body $body -SkipCertificateCheck -ErrorAction Stop
+            $response = Invoke-RestMethod -Method POST -Uri "https://${operationsFqdn}/suite-api/api/credentials" -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
         } else {
-            $response = Invoke-RestMethod -Method POST -Uri $uri -Headers $Headers -Body $body -ErrorAction Stop
+            $response = Invoke-RestMethod -Method POST -Uri "https://${operationsFqdn}/suite-api/api/credentials" -Headers $operationsHeaders -Body $body -ErrorAction Stop
         }
         Write-Host "[✓] Credential '$CredentialName' created successfully" -ForegroundColor Green
         return $response
@@ -731,19 +729,13 @@ function Add-OperationsCredential {
 }
 
 function Get-OperationsCollectorGroup {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)] [String]$Fqdn,
-        [Parameter(Mandatory = $true)] [Hashtable]$Headers
-    )
-
     Write-Host "[+] Querying collector groups in VCF Operations..." -ForegroundColor Cyan
-    $uri = "https://$Fqdn/suite-api/api/collectorgroups"
+
     try {
         if ($PSEdition -eq 'Core') {
-            $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $Headers -SkipCertificateCheck -ErrorAction Stop
+            $response = Invoke-RestMethod -Method GET -Uri "https://${operationsFqdn}/suite-api/api/collectorgroups" -Headers $operationsHeaders -SkipCertificateCheck -ErrorAction Stop
         } else {
-            $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $Headers -ErrorAction Stop
+            $response = Invoke-RestMethod -Method GET -Uri "https://${operationsFqdn}/suite-api/api/collectorgroups" -Headers $operationsHeaders -ErrorAction Stop
         }
         return $response.collectorGroups
     }
@@ -752,7 +744,6 @@ function Get-OperationsCollectorGroup {
         return @()
     }
 }
-
 
 function Invoke-OperationsRest {
     # Single REST wrapper. Returns @{ Ok; Status; Body } and never throws, so callers can inspect
@@ -800,17 +791,15 @@ function Find-OperationsCertificate {
 function Get-OperationsAdapter {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true)]  [String]$Fqdn,
-        [Parameter(Mandatory = $true)]  [Hashtable]$Headers,
         [Parameter(Mandatory = $false)] [String]$AdapterId,
         [Parameter(Mandatory = $false)] [String]$AdapterKindKey
     )
 
-    $uri = "https://$Fqdn/suite-api/api/adapters"
+    $uri = "https://${operationsFqdn}/suite-api/api/adapters"
     if ($AdapterId) { $uri += "/$AdapterId" }
     elseif ($AdapterKindKey) { $uri += "?adapterKindKey=$AdapterKindKey" }
 
-    $r = Invoke-OperationsRest -Method GET -Uri $uri -Headers $Headers
+    $r = Invoke-OperationsRest -Method GET -Uri $uri -Headers $operationsHeaders
     if (-not $r.Ok) { Write-Warning "[!] Get-OperationsAdapter failed ($($r.Status)): $($r.Message)"; return @() }
     if ($AdapterId) { return $r.Body } else { return $r.Body.adapterInstancesInfoDto }
 }
@@ -849,8 +838,6 @@ function New-OperationsVcenterIntegrationPayload {
 function Start-OperationsAdapterCollection {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true)] [String]$Fqdn,
-        [Parameter(Mandatory = $true)] [Hashtable]$Headers,
         [Parameter(Mandatory = $true)] [String[]]$AdapterInstanceIds
     )
 
@@ -859,7 +846,7 @@ function Start-OperationsAdapterCollection {
     $allStarted = $true
     foreach ($id in $AdapterInstanceIds) {
         Write-Host "[+] Starting collection for adapter instance ID: $id..." -ForegroundColor Cyan
-        $r = Invoke-OperationsRest -Method PUT -Uri "https://$Fqdn/suite-api/api/adapters/$id/monitoringstate/start" -Headers $Headers
+        $r = Invoke-OperationsRest -Method PUT -Uri "https://${operationsFqdn}/suite-api/api/adapters/$id/monitoringstate/start" -Headers $operationsHeaders
         if ($r.Ok) {
             Write-Host "[✓] Start requested for adapter ID: $id" -ForegroundColor Green
         } else {
@@ -869,7 +856,6 @@ function Start-OperationsAdapterCollection {
     }
     return $allStarted
 }
-
 
 function Add-VcenterAdapter {
 <#
@@ -882,22 +868,14 @@ function Add-VcenterAdapter {
     register vCenter cloud accounts, and start metric collection.
 
     .EXAMPLE
-    Add-VcenterAdapter -VcfOpsFqdn "sfo-ops01.sfo.rainpole.io" `
-                       -Username "admin" `
-                       -Password "VMware1!" `
-                       -VcenterFqdn "sfo-w03-vc01.sfo.rainpole.io" `
-                       -VcenterUser "administrator@vsphere.local" `
-                       -VcenterPass "VMware1!"
+    Add-VcenterAdapter -VcenterFqdn "sfo-w03-vc01.sfo.rainpole.io" -VcenterUser "administrator@vsphere.local" -VcenterPass "VMware1!"
 #>
     [CmdletBinding()]
     Param (
-        [Parameter(Mandatory = $false)] [String]$VcfOpsFqdn = "sfo-ops01.sfo.rainpole.io",
-        [Parameter(Mandatory = $false)] [String]$Username = "admin",
-        [Parameter(Mandatory = $false)] [String]$Password = "VMware1!",
-        [Parameter(Mandatory = $false)] [String]$VcenterFqdn = "sfo-w03-vc01.sfo.rainpole.io",
-        [Parameter(Mandatory = $false)] [String]$VcenterUser = "administrator@vsphere.local",
-        [Parameter(Mandatory = $false)] [String]$VcenterPass = "VMware1!",
-        [Parameter(Mandatory = $false)] [String]$CollectorGroupId = ""
+        [Parameter(Mandatory = $false)] [String]$VcenterFqdn,
+        [Parameter(Mandatory = $false)] [String]$VcenterUser,
+        [Parameter(Mandatory = $false)] [String]$VcenterPass,
+        [Parameter(Mandatory = $false)] [String]$CollectorGroupId
     )
 
     if ($PSEdition -ne 'Core') {
@@ -908,45 +886,38 @@ function Add-VcenterAdapter {
 
     Write-Host "[+] Starting VCF Operations Cloud Account Workflow..." -ForegroundColor Cyan
 
-    # 1. Acquire Ops Token
-    $opsToken = Request-OperationsToken -Fqdn $VcfOpsFqdn -Username $Username -Password $Password
-    $apiHeaders = @{
-        "Accept"        = "application/json"
-        "Content-Type"  = "application/json"
-        "Authorization" = "OpsToken $opsToken"
-    }
-
-    # 2. Get or Create Credential
-    $existingCreds = Get-OperationsCredential -Fqdn $VcfOpsFqdn -Headers $apiHeaders
+    # 1. Get or Create Credential
+    $existingCreds = Get-OperationsCredential
     $credObj = $existingCreds | Where-Object { $_.name -eq $cleanVcFqdn -or $_.name -eq $VcenterFqdn } | Select-Object -First 1
 
     if (-not $credObj) {
-        $credObj = Add-OperationsCredential -Fqdn $VcfOpsFqdn -Headers $apiHeaders -CredentialName $cleanVcFqdn -User $VcenterUser -Pass $VcenterPass
+        $credObj = Add-OperationsCredential -CredentialName $cleanVcFqdn -User $VcenterUser -Pass $VcenterPass
     } else {
-        Write-Host "[✓] Found existing credential for '$cleanVcFqdn' (ID: $($credObj.id))" -ForegroundColor Green
+        Write-Host "[!] Found existing credential for '$cleanVcFqdn' (ID: $($credObj.id))" -ForegroundColor Yellow
     }
     $credentialId = if ($credObj.id) { $credObj.id } else { $credObj.credentialInstances[0].id }
 
-    # 3. Resolve Collector Group
+    # 2. Resolve Collector Group
     if ([String]::IsNullOrWhiteSpace($CollectorGroupId)) {
-        $collectors = Get-OperationsCollectorGroup -Fqdn $VcfOpsFqdn -Headers $apiHeaders
+        $collectors = Get-OperationsCollectorGroup
         if ($collectors -and $collectors.Count -gt 0) {
             $CollectorGroupId = if ($collectors[0].id) { $collectors[0].id } else { $collectors[0].collectorGroupId }
         }
     }
     Write-Host "[✓] Using Collector Group ID: $CollectorGroupId" -ForegroundColor Green
 
-    # 4. Check if Adapter Exists or Create It
+    # 3. Check if Adapter Exists or Create It
+    Write-Host "[+] Checking if the Adapter already exists..." -ForegroundColor Cyan
     $matchesVc = { (Get-OperationsAdapterName $_) -in @($cleanVcFqdn, $VcenterFqdn) }
-    $adapterObj = Get-OperationsAdapter -Fqdn $VcfOpsFqdn -Headers $apiHeaders -AdapterKindKey "VMWARE" | Where-Object $matchesVc | Select-Object -First 1
+    $adapterObj = Get-OperationsAdapter -AdapterKindKey "VMWARE" | Where-Object $matchesVc | Select-Object -First 1
 
     if (-not $adapterObj) {
         # 4a. Test connection first; vCenter's untrusted certificate is returned for acceptance
         $payload = New-OperationsVcenterIntegrationPayload -VcenterFqdn $cleanVcFqdn -CollectorGroupId $CollectorGroupId -CredentialId $credentialId
-        $base = "https://$VcfOpsFqdn/suite-api/api/integrations/vcenters"
+        $base = "https://${operationsFqdn}/suite-api/api/integrations/vcenters"
 
         Write-Host "[+] Testing vCenter connection and certificate..." -ForegroundColor Cyan
-        $test = Invoke-OperationsRest -Method POST -Uri "$base/testConnection" -Headers $apiHeaders -Body $payload
+        $test = Invoke-OperationsRest -Method POST -Uri "$base/testConnection" -Headers $operationsHeaders -Body $payload
         $certs = @(Find-OperationsCertificate -Node $test.Body)
         if (-not $test.Ok -and $certs.Count -eq 0) {
             throw "vCenter testConnection failed (HTTP $($test.Status)): $($test.Message)"
@@ -958,25 +929,25 @@ function Add-VcenterAdapter {
             $payload = New-OperationsVcenterIntegrationPayload -VcenterFqdn $cleanVcFqdn -CollectorGroupId $CollectorGroupId -CredentialId $credentialId -Certificates $certs
         }
         Write-Host "[+] Registering vCenter adapter in VCF Operations..." -ForegroundColor Cyan
-        $create = Invoke-OperationsRest -Method POST -Uri $base -Headers $apiHeaders -Body $payload
+        $create = Invoke-OperationsRest -Method POST -Uri $base -Headers $operationsHeaders -Body $payload
         if (-not $create.Ok) { throw "Failed to create vCenter integration (HTTP $($create.Status)): $($create.Message)" }
 
-        $adapterObj = Get-OperationsAdapter -Fqdn $VcfOpsFqdn -Headers $apiHeaders -AdapterKindKey "VMWARE" | Where-Object $matchesVc | Select-Object -First 1
+        $adapterObj = Get-OperationsAdapter -AdapterKindKey "VMWARE" | Where-Object $matchesVc | Select-Object -First 1
         if (-not $adapterObj) { throw "vCenter integration was created but the adapter instance could not be found." }
     } else {
-        Write-Host "[✓] Found existing vCenter adapter for '$cleanVcFqdn' (ID: $($adapterObj.id))" -ForegroundColor Green
+        Write-Host "[!] Found existing vCenter adapter for '$cleanVcFqdn' (ID: $($adapterObj.id))" -ForegroundColor Yellow
     }
 
     $adapterId = $adapterObj.id
 
-    # 5. Collect the adapter IDs to start: the vCenter adapter plus its vSAN child (UI uses withChildren=true)
+    # 4. Collect the adapter IDs to start: the vCenter adapter plus its vSAN child (UI uses withChildren=true)
     $adapterIdsToStart = @($adapterId)
-    $vsanAdapter = Get-OperationsAdapter -Fqdn $VcfOpsFqdn -Headers $apiHeaders -AdapterKindKey "VirtualAndPhysicalSANAdapter" |
+    $vsanAdapter = Get-OperationsAdapter -AdapterKindKey "VirtualAndPhysicalSANAdapter" |
         Where-Object { (Get-OperationsAdapterName $_) -like "$cleanVcFqdn*" } | Select-Object -First 1
     if ($vsanAdapter) { $adapterIdsToStart += $vsanAdapter.id }
 
-    # 6. Enable Metric Collection (creation leaves the adapters Stopped / Not Collecting)
-    $started = Start-OperationsAdapterCollection -Fqdn $VcfOpsFqdn -Headers $apiHeaders -AdapterInstanceIds $adapterIdsToStart
+    # 5. Enable Metric Collection (creation leaves the adapters Stopped / Not Collecting)
+    $started = Start-OperationsAdapterCollection -AdapterInstanceIds $adapterIdsToStart
     if (-not $started) { throw "One or more adapters could not be started; see errors above." }
 
     Write-Host "[✓] VCF Operations Cloud Account Workflow Completed Successfully for $cleanVcFqdn" -ForegroundColor Green
@@ -992,7 +963,7 @@ function Request-LicenseServerOTK {
         $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
 
         $Script:licenseServerOTK = Invoke-RestMethod -Method GET `
-            -Uri "https://${operationsAppliance}/suite-api/internal/extension/vcf-license-cloud-integration/license-servers/otk" `
+            -Uri "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/license-servers/otk" `
             -Headers $internalHeaders `
             -SkipCertificateCheck
 
@@ -1021,12 +992,12 @@ function Deploy-LicenseServerAppliance {
 
         if ($existingVm) {
             # Warn and skip import
-            Write-Host "[!] VM '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' already exists on this vCenter. Skipping OVA import" -ForegroundColor Yellow
+            Write-Host "[!] Found existing Virtual Machine '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' in this vCenter. Skipping OVA import" -ForegroundColor Yellow
             $importedVm = $existingVm
         } 
         else {
             # 3. Extract OVF configuration & Import (Only run if VM does NOT exist)
-            Write-Host "[+] Extracting OVF configuration..." -ForegroundColor Cyan
+            Write-Host "[+] Extracting Open Virtualization Format (OVF) configuration..." -ForegroundColor Cyan
             $ovfConfigLicenseServer = Get-OvfConfiguration -Ovf $jsonInput.licenseServer.ovaPath
 
             # Configure network and system properties
@@ -1059,7 +1030,7 @@ function Deploy-LicenseServerAppliance {
             Write-Host "[+] Powering on VM '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')'..." -ForegroundColor Cyan
             $importedVm = Start-VM -VM $importedVm -Confirm:$false -ErrorAction Stop
         } else {
-            Write-Host "[!] VM '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' is already powered on" -ForegroundColor Yellow
+            Write-Host "[!] Virtual Machine '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' is already powered on" -ForegroundColor Yellow
         }
 
         # 5. Polling Loop with Timeout for Valid IPv4 Address
@@ -1095,7 +1066,7 @@ function Deploy-LicenseServerAppliance {
 
         # 6. Final Status Check
         if ($validIp) {
-            Write-Host "[✓] VM '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' is powered on and reachable at IP: $validIp" -ForegroundColor Green
+            Write-Host "[✓] Virtual Machine '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' is powered on and reachable at IP: $validIp" -ForegroundColor Green
         } else {
             Write-Warning "[!] Timed out after $TimeoutMinutes minutes waiting for a valid IP address."
             Write-Warning "    - Check if VMware Tools booted properly inside the guest OS."
@@ -1372,7 +1343,7 @@ Try {
             Request-OperationsToken -fqdn $jsonInput.operations.master.fqdn -username admin -password $jsonInput.operations.adminPassword
             Set-EulaSetting # Accept the EULA
             Set-CeipSetting -status DISABLED # Disable the CEIP setting
-            Add-VcenterAdapter -VcfOpsFqdn $jsonInput.operations.master.fqdn -Username "admin" -Password $jsonInput.operations.adminPassword -VcenterFqdn $jsonInput.vcenter.fqdn -VcenterUser $jsonInput.vcenter.username -VcenterPass $jsonInput.vcenter.password
+            Add-VcenterAdapter -VcenterFqdn $jsonInput.vcenter.fqdn -VcenterUser $jsonInput.vcenter.username -VcenterPass $jsonInput.vcenter.password
 
             # Deploy and Register a License Server
             Request-LicenseServerOTK # Request a one time key (OTK) for the registration of the License Server with VCF Operations
