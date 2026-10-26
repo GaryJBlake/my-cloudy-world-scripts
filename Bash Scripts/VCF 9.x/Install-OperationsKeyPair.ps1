@@ -54,26 +54,8 @@ function Install-OperationsKeyPair {
 
     begin {
         if ($SkipCertificateCheck) {
-            # Register a C# certificate validator type if not already present
-            if (-not ([System.Management.Automation.PSTypeName]'VcfOpsTrustAllCerts').Type) {
-                $code = @"
-                    using System.Net;
-                    using System.Net.Security;
-                    using System.Security.Cryptography.X509Certificates;
-                    public class VcfOpsTrustAllCerts {
-                        public static bool Validate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors) {
-                            return true;
-                        }
-                    }
-"@
-                Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
-            }
-
-            if ($PSVersionTable.PSVersion.Major -ge 6) {
-                [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-            } else {
-                [System.Net.ServicePointManager]::ServerCertificateValidationCallback = [System.Net.Security.RemoteCertificateValidationCallback]::new([VcfOpsTrustAllCerts]::Validate)
-            }
+            # Configure SSL / TLS bypass across all PowerShell sessions
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
             [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls11 -bor [System.Net.SecurityProtocolType]::Tls
         }
     }
@@ -111,15 +93,17 @@ function Install-OperationsKeyPair {
             $pemCleanContent = $pemRawContent.Trim()
 
             # Fix headers/footers to standard 5-dash PEM format if needed
-            $pemCleanContent = $pemCleanContent -replace "(?m)^-+\s*BEGIN\s+PRIVATE\s+KEY\s*-+", "-----BEGIN PRIVATE KEY-----"
-            $pemCleanContent = $pemCleanContent -replace "(?m)^-+\s*END\s+PRIVATE\s+KEY\s*-+", "-----END PRIVATE KEY-----"
-            $pemCleanContent = $pemCleanContent -replace "(?m)^-+\s*BEGIN\s+PUBLIC\s+KEY\s*-+", "-----BEGIN PUBLIC KEY-----"
-            $pemCleanContent = $pemCleanContent -replace "(?m)^-+\s*END\s+PUBLIC\s+KEY\s*-+", "-----END PUBLIC KEY-----"
-            $pemCleanContent = $pemCleanContent -replace "(?m)^-+\s*BEGIN\s+CERTIFICATE\s*-+", "-----BEGIN CERTIFICATE-----"
-            $pemCleanContent = $pemCleanContent -replace "(?m)^-+\s*END\s+CERTIFICATE\s*-+", "-----END CERTIFICATE-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*BEGIN\s+PRIVATE\s+KEY\s*-+", "-----BEGIN PRIVATE KEY-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*END\s+PRIVATE\s+KEY\s*-+", "-----END PRIVATE KEY-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*BEGIN\s+RSA\s+PRIVATE\s+KEY\s*-+", "-----BEGIN RSA PRIVATE KEY-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*END\s+RSA\s+PRIVATE\s+KEY\s*-+", "-----END RSA PRIVATE KEY-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*BEGIN\s+PUBLIC\s+KEY\s*-+", "-----BEGIN PUBLIC KEY-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*END\s+PUBLIC\s+KEY\s*-+", "-----END PUBLIC KEY-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*BEGIN\s+CERTIFICATE\s*-+", "-----BEGIN CERTIFICATE-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*END\s+CERTIFICATE\s*-+", "-----END CERTIFICATE-----"
 
             # Standardize line endings to LF (\n)
-            $pemCleanContent = $pemCleanContent -replace "\r\n", "`n" -replace "\r", "`n" + "`n"
+            $pemCleanContent = ($pemCleanContent -split "\r?\n" | Where-Object { $_ -match "\S" -or $_ -match "-----" }) -join "`n" + "`n"
 
             # Check for essential PEM markers
             $hasPrivateKey = $pemCleanContent -match "-----BEGIN (RSA )?PRIVATE KEY-----"
@@ -214,11 +198,8 @@ function Install-OperationsKeyPair {
 
                         $uploadResult = Invoke-RestMethod @splatUpload
                     } else {
-                        # Windows PowerShell 5.1: Use HttpClient with custom C# SSL callback
+                        # Windows PowerShell 5.1: Use HttpClient
                         $handler = New-Object System.Net.Http.HttpClientHandler
-                        if ($SkipCertificateCheck) {
-                            $handler.ServerCertificateCustomValidationCallback = [System.Net.Security.RemoteCertificateValidationCallback]::new([VcfOpsTrustAllCerts]::Validate)
-                        }
 
                         $httpClient = New-Object System.Net.Http.HttpClient($handler)
                         $httpClient.DefaultRequestHeaders.Add("Authorization", "vRealizeOpsToken $token")
@@ -236,19 +217,17 @@ function Install-OperationsKeyPair {
                         }
 
                         $multipartContent = New-Object System.Net.Http.MultipartFormDataContent
-                        $fileStream = [System.IO.File]::OpenRead($uploadPemPath)
-                        $fileContent = New-Object System.Net.Http.StreamContent($fileStream)
-                        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/x-pem-file")
+                        $fileBytes = [System.IO.File]::ReadAllBytes($uploadPemPath)
+                        $byteArrayContent = New-Object System.Net.Http.ByteArrayContent(,$fileBytes)
+                        $byteArrayContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/x-pem-file")
                         
                         $fileName = [System.IO.Path]::GetFileName($uploadPemPath)
-                        $multipartContent.Add($fileContent, "file", $fileName)
+                        $multipartContent.Add($byteArrayContent, "file", $fileName)
 
                         $responseTask = $httpClient.PostAsync($uploadUrl, $multipartContent)
                         $responseTask.Wait()
                         $response = $responseTask.Result
 
-                        $fileStream.Close()
-                        $fileStream.Dispose()
                         $httpClient.Dispose()
 
                         if (-not $response.IsSuccessStatusCode) {
@@ -265,7 +244,15 @@ function Install-OperationsKeyPair {
                 }
                 catch {
                     $lastUploadError = $_
-                    Write-Verbose "Upload to '$uploadUrl' failed: $_"
+                    if ($_.Exception.Response) {
+                        try {
+                            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                            $resBody = $reader.ReadToEnd()
+                            $reader.Close()
+                            if ($resBody) { $lastUploadError = $resBody }
+                        } catch {}
+                    }
+                    Write-Verbose "Upload to '$uploadUrl' failed: $lastUploadError"
                 }
             }
 
