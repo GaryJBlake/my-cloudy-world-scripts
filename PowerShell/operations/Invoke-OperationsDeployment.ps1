@@ -1305,8 +1305,11 @@ function Install-OperationsKeyPair {
         [Parameter(Mandatory = $true, HelpMessage = "VCF Operations FQDN or IP address")]
         [string]$VcfOpsHost,
 
-        [Parameter(Mandatory = $true)] [String]$Username,
-        [Parameter(Mandatory = $true)] [String]$Password,
+        [Parameter(Mandatory = $true)]
+        [String]$Username,
+
+        [Parameter(Mandatory = $true)]
+        [String]$Password,
 
         [Parameter(Mandatory = $true, HelpMessage = "Path to the combined public/private keypair .pem file")]
         [Alias("PemPath", "FilePath")]
@@ -1382,55 +1385,22 @@ function Install-OperationsKeyPair {
             [System.IO.File]::WriteAllText($uploadPemPath, $pemCleanContent, $utf8NoBOM)
 
             # ---------------------------------------------------------
-            # Steps 2 & 3: Acquire Auth Token (Authorize / Log in)
+            # Steps 2 : Update Header with Additional Values
             # ---------------------------------------------------------
-            Write-Host "[+] Authenticating with VCF Operations ($VcfOpsHost)..." -ForegroundColor Cyan
-            $authUrl = "https://$VcfOpsHost/suite-api/api/auth/token/acquire"
-
-            $authBody = @{
-                username = $Username
-                password = $Password
-            } | ConvertTo-Json
-
-            $webSession = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
-
-            $splatAuth = @{
-                Uri         = $authUrl
-                Method      = 'Post'
-                ContentType = 'application/json'
-                Headers     = @{ 'Accept' = 'application/json' }
-                Body        = $authBody
-                WebSession  = $webSession
-            }
-            if ($SkipCertificateCheck) {
-                $splatAuth['SkipCertificateCheck'] = $true
-            }
-
-            $authResponse = Invoke-RestMethod @splatAuth
-
-            if (-not $authResponse.token) {
-                throw "Failed to retrieve authentication token from VCF Operations."
-            }
-
-            $token = $authResponse.token
-            Write-Host "[✓] Authentication successful." -ForegroundColor Green
-
-            $authHeaders = @{
-                'Authorization'                 = "vRealizeOpsToken $token"
-                'vRealizeOpsToken'              = $token
-                'X-vRealizeOps-API-use-internal' = 'true'
-                'X-Ops-API-use-unsupported'     = 'true'
-                'Accept'                        = 'application/json, text/plain, */*'
-            }
+            
+            $internalHeaders = @{}
+            foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+            $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+            $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
 
             # ---------------------------------------------------------
-            # Steps 4-6: Upload Key Pair (/internal/license-manager/identity/keypair)
+            # Steps 3-5: Upload Key Pair (/internal/license-manager/identity/keypair)
             # ---------------------------------------------------------
             Write-Host "[+] Uploading key pair to VCF Operations License Manager..." -ForegroundColor Cyan
-            
+
             $candidateUploadUrls = @(
-                "https://$VcfOpsHost/suite-api/api/internal/license-manager/identity/keypair",
-                "https://$VcfOpsHost/suite-api/internal/license-manager/identity/keypair"
+                "https://${operationsFqdn}/suite-api/api/internal/license-manager/identity/keypair",
+                "https://${operationsFqdn}/suite-api/internal/license-manager/identity/keypair"
             )
 
             # Candidate form field keys expected by backend API (Spring controller)
@@ -1447,7 +1417,7 @@ function Install-OperationsKeyPair {
                         $splatUpload = @{
                             Uri        = $uploadUrl
                             Method     = 'Post'
-                            Headers    = $authHeaders
+                            Headers    = $internalHeaders
                             Form       = @{
                                 $formKey = Get-Item -Path $uploadPemPath
                             }
@@ -1483,15 +1453,15 @@ function Install-OperationsKeyPair {
             }
 
             # ---------------------------------------------------------
-            # Steps 7 & 8: Optional Status Verification
+            # Steps 6 & 7: Optional Status Verification
             # ---------------------------------------------------------
             $statusResult = $null
             if ($VerifyStatus) {
                 Write-Host "[+] Verifying registration and private mode status..." -ForegroundColor Cyan
                 
                 $candidateStatusUrls = @(
-                    "https://$VcfOpsHost/suite-api/api/internal/license-manager/registration/status",
-                    "https://$VcfOpsHost/suite-api/internal/license-manager/registration/status"
+                    "https://${operationsFqdn}/suite-api/api/internal/license-manager/registration/status",
+                    "https://${operationsFqdn}/suite-api/internal/license-manager/registration/status"
                 )
 
                 foreach ($statusUrl in $candidateStatusUrls) {
@@ -1500,7 +1470,7 @@ function Install-OperationsKeyPair {
                         $splatStatus = @{
                             Uri        = $statusUrl
                             Method     = 'Get'
-                            Headers    = $authHeaders
+                            Headers    = $internalHeaders
                             WebSession = $webSession
                         }
                         if ($SkipCertificateCheck) {
