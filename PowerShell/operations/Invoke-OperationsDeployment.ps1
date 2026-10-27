@@ -1327,7 +1327,7 @@ function Install-OperationsKeyPair {
             # ---------------------------------------------------------
             # Step 1: Verify Keypair File Existence
             # ---------------------------------------------------------
-            Write-Host "[+] Validating the existence of the Key Pair file..." -ForegroundColor Cyan
+            Write-Host "[+] Validating the existence of the Key Pair file for '$VcfOpsHost'..." -ForegroundColor Cyan
             
             $targetPath = $KeypairPath
             if (-not (Test-Path -Path $targetPath)) {
@@ -1396,7 +1396,7 @@ function Install-OperationsKeyPair {
             # ---------------------------------------------------------
             # Steps 3-5: Upload Key Pair (/internal/license-manager/identity/keypair)
             # ---------------------------------------------------------
-            Write-Host "[+] Uploading key pair to VCF Operations License Manager..." -ForegroundColor Cyan
+            Write-Host "[+] Uploading key pair to VCF Operations..." -ForegroundColor Cyan
 
             $candidateUploadUrls = @(
                 "https://${operationsFqdn}/suite-api/api/internal/license-manager/identity/keypair",
@@ -1768,6 +1768,7 @@ Try {
 
             # Generate Private and Public Keys and Import into VCF Operations
             New-RsaKeyPair -OutputDirectory ".\" -Overwrite -PrivateKeyFile ($jsonInput.licenseServer.fqdn + "-private_key.pem") -PublicKeyFile ($jsonInput.licenseServer.fqdn + "-public_key.pem") -CombinedKeyFile ($jsonInput.licenseServer.fqdn + "-keypair.pem")
+            New-RsaKeyPair -OutputDirectory ".\" -Overwrite -PrivateKeyFile ($jsonInput.operations.master.fqdn + "-private_key.pem") -PublicKeyFile ($jsonInput.operations.master.fqdn + "-public_key.pem") -CombinedKeyFile ($jsonInput.operations.master.fqdn + "-keypair.pem")
             Install-OperationsKeyPair -VcfOpsHost $jsonInput.operations.master.fqdn -Username admin -Password $jsonInput.operations.adminPassword -KeypairPath (".\" + $jsonInput.licenseServer.fqdn + "-keypair.pem") -SkipCertificateCheck
             
             # License the system
