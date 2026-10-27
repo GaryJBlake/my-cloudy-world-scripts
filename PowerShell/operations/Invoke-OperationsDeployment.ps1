@@ -1299,45 +1299,14 @@ function New-RsaKeyPair {
     }
 }
 
-<#
-.SYNOPSIS
-    Uploads a combined keypair .pem file to VCF Operations License Manager via REST API.
-
-.DESCRIPTION
-    This function automates the following steps in PowerShell Core (PS 7+):
-    1. Verifies that the provided combined keypair .pem file exists locally.
-    2. Normalizes PEM formatting (5-dash headers, LF line breaks, UTF-8 without BOM).
-    3. Authenticates with the VCF Operations Suite API to acquire an access token.
-    4. Uploads the keypair .pem file to VCF Operations via POST /suite-api/api/internal/license-manager/identity/keypair.
-    5. Optionally verifies the registration status via GET /suite-api/api/internal/license-manager/registration/status.
-
-.PARAMETER VcfOpsHost
-    The FQDN or IP address of the VCF Operations instance (e.g., vcf-ops.domain.com).
-
-.PARAMETER Credential
-    PSCredential object containing VCF Operations login credentials.
-
-.PARAMETER KeypairPath
-    Path to the existing combined .pem keypair file (containing both PRIVATE KEY and PUBLIC KEY blocks).
-
-.PARAMETER VerifyStatus
-    Switch parameter to verify that VCF Operations is in private mode and check connectivity status post-upload.
-
-.PARAMETER SkipCertificateCheck
-    Bypasses SSL/TLS certificate validation for self-signed or internal certificates.
-
-.EXAMPLE
-    $cred = Get-Credential
-    Install-OperationsKeyPair -VcfOpsHost "vcf-ops.example.com" -Credential $cred -KeypairPath "/tmp/keypair.pem" -VerifyStatus -SkipCertificateCheck
-#>
 function Install-OperationsKeyPair {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true, HelpMessage = "VCF Operations FQDN or IP address")]
         [string]$VcfOpsHost,
 
-        [Parameter(Mandatory = $true, HelpMessage = "VCF Operations Credentials")]
-        [System.Management.Automation.PSCredential]$Credential,
+        [Parameter(Mandatory = $true)] [String]$Username,
+        [Parameter(Mandatory = $true)] [String]$Password,
 
         [Parameter(Mandatory = $true, HelpMessage = "Path to the combined public/private keypair .pem file")]
         [Alias("PemPath", "FilePath")]
@@ -1419,8 +1388,8 @@ function Install-OperationsKeyPair {
             $authUrl = "https://$VcfOpsHost/suite-api/api/auth/token/acquire"
 
             $authBody = @{
-                username = $Credential.UserName
-                password = $Credential.GetNetworkCredential().Password
+                username = $Username
+                password = $Password
             } | ConvertTo-Json
 
             $webSession = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
@@ -1555,7 +1524,6 @@ function Install-OperationsKeyPair {
         }
     }
 }
-
 
 function Get-RegistrationFile {
     
@@ -1830,7 +1798,7 @@ Try {
 
             # Generate Private and Public Keys and Import into VCF Operations
             New-RsaKeyPair -OutputDirectory ".\" -Overwrite -PrivateKeyFile ($jsonInput.licenseServer.fqdn + "-private_key.pem") -PublicKeyFile ($jsonInput.licenseServer.fqdn + "-public_key.pem") -CombinedKeyFile ($jsonInput.licenseServer.fqdn + "-keypair.pem")
-            Install-OperationsKeyPair -VcfOpsHost $jsonInput.operations.master.fqdn -Credential $cred -KeypairPath (".\" + $jsonInput.licenseServer.fqdn + "-keypair.pem") -SkipCertificateCheck
+            Install-OperationsKeyPair -VcfOpsHost $jsonInput.operations.master.fqdn -Username admin -Password $jsonInput.operations.adminPassword -KeypairPath (".\" + $jsonInput.licenseServer.fqdn + "-keypair.pem") -SkipCertificateCheck
             
             # License the system
             # Get-RegistrationFile # Download the license registration file from VCF Operations
