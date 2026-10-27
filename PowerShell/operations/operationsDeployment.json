@@ -25,7 +25,8 @@
         "ipAddress": "10.11.10.206",
         "gateway": "10.11.10.1",
         "netmask": "255.255.255.0",
-        "ovaPath": "F:/PlatformTools/binaries/Vcf-License-Server-9.1.1.0.25679819.ova"
+        "ovaPath": "F:/PlatformTools/binaries/Vcf-License-Server-9.1.1.0.25679819.ova",
+        "licenseFile": "F:/Scripts/license-license_2026-10-27_12-32-19-352Z.lic"
     },
     "dnsServers": "10.11.10.4, 10.11.10.5",
     "ntpServers": [

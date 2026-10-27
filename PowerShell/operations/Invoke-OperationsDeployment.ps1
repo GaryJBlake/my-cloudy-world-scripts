@@ -1151,7 +1151,7 @@ function Deploy-LicenseServerAppliance {
             # 3. Extract OVF configuration & Import (Only run if VM does NOT exist)
             Write-Host "[+] Extracting Open Virtualization Format (OVF) configuration for License Server..." -ForegroundColor Cyan
 
-            $licenseServerApiKey = Get-RandomApiKey
+            $Script:licenseServerApiKey = Get-RandomApiKey
             $ovfConfigLicenseServer = Get-OvfConfiguration -Ovf $jsonInput.licenseServer.ovaPath
 
             # Configure network and system properties
@@ -1298,7 +1298,7 @@ function New-RsaKeyPair {
         try {
             # 1. Check if openssl is installed and accessible in PATH
             if (-not (Get-Command "openssl" -ErrorAction SilentlyContinue)) {
-                throw "OpenSSL executable ('openssl') was not found in PATH. Please install OpenSSL and ensure it is available in your environment path."
+                throw "[X] OpenSSL executable ('openssl') was not found in PATH. Please install OpenSSL and ensure it is available in your environment path."
             }
 
             # Determine the execution folder of the script (where script file resides)
@@ -1650,6 +1650,74 @@ function Install-OperationsKeyPair {
     }
 }
 
+function Install-LicenseServerKey {
+    <#
+    .SYNOPSIS
+        Uploads/registers a private key PEM file to the VCF License Server identity key endpoint.
+
+    .DESCRIPTION
+        This script/function posts a private key file to the VCF License Server identity API endpoint
+        (/lss/external/api/v1/identity/key) using X-API-Key authentication header.
+
+    .PARAMETER LicenseServerFqdn
+        The FQDN of the License Server. Default: "sfo-lc01.sfo.rainpole.io".
+
+    .PARAMETER ApiKey
+        The API key for authentication via the X-API-Key header. Default: "API-20261027-CD0EA41F964A2C23ADD560A6".
+
+    .PARAMETER PrivateKeyPemFilePath
+        Path to the private key PEM file. Default: "./sfo-lc01.sfo.rainpole.io-private_key.pem".
+
+    .PARAMETER SkipCertificateCheck
+        Switch parameter to bypass SSL/TLS certificate validation. Default: Enabled.
+
+    .EXAMPLE
+        Install-LicenseServerKey -LicenseServerFqdn "sfo-lc01.sfo.rainpole.io" -ApiKey "API-20261027-CD0EA41F964A2C23ADD560A6" -PrivateKeyPemFilePath "./sfo-lc01.sfo.rainpole.io-private_key.pem"
+    #>
+    
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false, Position = 0)]
+        [string]$LicenseServerFqdn,
+
+        [Parameter(Mandatory = $false, Position = 1)]
+        [string]$ApiKey,
+
+        [Parameter(Mandatory = $false, Position = 2)]
+        [string]$PrivateKeyPemFilePath,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$SkipCertificateCheck = $true
+    )
+
+    process {
+        if (-not (Test-Path -Path $PrivateKeyPemFilePath)) {
+            throw "Private key PEM file was not found at path: '$PrivateKeyPemFilePath'"
+        }
+
+        $pemItem = Get-Item -Path $PrivateKeyPemFilePath
+        $licenseServerHeaders = @{
+            "X-API-Key" = $ApiKey
+        }
+
+        $uri = "https://${LicenseServerFqdn}/lss/external/api/v1/identity/key"
+
+        $restParams = @{
+            Uri     = $uri
+            Method  = "Post"
+            Headers = $licenseServerHeaders
+            Form    = @{ file = $pemItem }
+        }
+
+        if ($SkipCertificateCheck) {
+            $restParams["SkipCertificateCheck"] = $true
+        }
+
+        Write-Host "[+] Uploading private key '$PrivateKeyPemFilePath' to '$uri'..."
+        return Invoke-RestMethod @restParams
+    }
+}
+
 function Get-RegistrationFile {
     
     try {
@@ -1805,6 +1873,7 @@ function Import-LicenseFile {
             $internalHeaders = @{}
             foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
             $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+            $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
 
             # Prepare the multipart form data payload using Get-Item
             $uploadForm = @{
@@ -1812,7 +1881,7 @@ function Import-LicenseFile {
             }
 
             # Upload the file
-            $uploadResults = Invoke-RestMethod -Method POST `
+            $Global:uploadResults = Invoke-RestMethod -Method POST `
                 -Uri "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/registration/offline/response" `
                 -Headers $internalHeaders `
                 -Form $uploadForm `
@@ -1823,69 +1892,6 @@ function Import-LicenseFile {
     } catch {
         Write-Error $_.Exception.Message
     }
-}
-
-function Import-PublicPrivateKey {
-    [CmdletBinding()]
-    param (
-        [Parameter (Mandatory=$true)] [string]$Hostname,
-        [Parameter (Mandatory=$true)] [string]$PublicKeyFile,
-        [Parameter (Mandatory=$true)] [string]$PrivateKeyFile
-    )
-
-    # Check if key files exist
-    if (Test-Path -Path $PublicKeyFile) {
-        if (Test-Path -Path $PrivateKeyFile) {
-            # Create a temporary file for the combined keypair (using .pem extension for accurate MIME typing)
-            $tempDir = [System.IO.Path]::GetTempPath()
-            $keypairFile = New-Item -Path $tempDir -Name "keypair_$([guid]::NewGuid()).pem" -ItemType File -Force
-
-            # Combine private and public keys into the temporary file (Private first, exactly like the bash script)
-            Get-Content -Path $PrivateKeyFile | Set-Content -Path $keypairFile.FullName
-            Get-Content -Path $PublicKeyFile | Add-Content -Path $keypairFile.FullName
-            
-            try {
-                $internalHeaders = @{}
-                foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
-                $internalHeaders["X-Ops-API-use-unsupported"] = "true"
-
-                Write-Host "[+] Attempting to upload key pair for $Hostname..." -ForegroundColor Cyan
-
-                # Prepare multipart/form-data payload (similar to curl -F)
-                $form = @{
-                    keypair = Get-Item -Path $keypairFile.FullName
-                }
-
-                $uploadResponse = Invoke-RestMethod -Method Post `
-                    -Uri "https://$operationsAppliance/suite-api/internal/extension/vcf-license-cloud-integration/identity/keypair" `
-                    -Headers $internalHeaders `
-                    -Form $form `
-                    -SkipCertificateCheck
-
-                Write-Host ""
-                if ($null -eq $uploadResponse -or [string]::IsNullOrWhiteSpace($uploadResponse)) {
-                    Write-Host "[✓] Uploaded key pair for $Hostname successfully" -ForegroundColor Green
-                } else {
-                    Write-Host "[x] Upload Response:" -ForegroundColor Red
-                    $uploadResponse | ConvertTo-Json -Depth 5 | Write-Host
-                }
-            }
-            catch {
-                Write-Error "An error occurred during execution: $($_.Exception.Message)"
-            }
-            finally {
-                # Clean up temporary file
-                if (Test-Path -Path $keypairFile.FullName) {
-                    Remove-Item -Path $keypairFile.FullName -Force
-                }
-            }
-        } else {
-            Write-Host "[x] Error: Private key file not found: $PrivateKeyFile"  -ForegroundColor Red
-        }
-    } else {
-        Write-Host "[x] Error: Public key file not found: $PublicKeyFile" -ForegroundColor Red
-    }
-
 }
 
 # Main Script
@@ -1921,17 +1927,15 @@ Try {
             Request-LicenseServerOTK # Request a one time key (OTK) for the registration of the License Server with VCF Operations
             Deploy-LicenseServerAppliance # Deploy the License Server appliance
 
-            # Generate Private and Public Keys and Import into VCF Operations
-            New-RsaKeyPair -OutputDirectory ".\" -Overwrite -PrivateKeyFile ($jsonInput.licenseServer.fqdn + "-private_key.pem") -PublicKeyFile ($jsonInput.licenseServer.fqdn + "-public_key.pem") -CombinedKeyFile ($jsonInput.licenseServer.fqdn + "-keypair.pem")
+            # Generate Private and Public Keys and Import into VCF Operations & License Server
             New-RsaKeyPair -OutputDirectory ".\" -Overwrite -PrivateKeyFile ($jsonInput.operations.master.fqdn + "-private_key.pem") -PublicKeyFile ($jsonInput.operations.master.fqdn + "-public_key.pem") -CombinedKeyFile ($jsonInput.operations.master.fqdn + "-keypair.pem")
-            Install-OperationsKeyPair -VcfOpsHost $jsonInput.operations.master.fqdn -Username admin -Password $jsonInput.operations.adminPassword -KeypairPath (".\" + $jsonInput.licenseServer.fqdn + "-keypair.pem") -SkipCertificateCheck
+            Install-OperationsKeyPair -VcfOpsHost $jsonInput.operations.master.fqdn -Username admin -Password $jsonInput.operations.adminPassword -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -SkipCertificateCheck
             
+            New-RsaKeyPair -OutputDirectory ".\" -Overwrite -PrivateKeyFile ($jsonInput.licenseServer.fqdn + "-private_key.pem") -PublicKeyFile ($jsonInput.licenseServer.fqdn + "-public_key.pem") -CombinedKeyFile ($jsonInput.licenseServer.fqdn + "-keypair.pem")
+            Install-LicenseServerKey -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -PrivateKeyPemFilePath ($jsonInput.licenseServer.fqdn + "-private_key.pem")
+
             # License the system
-            # Get-RegistrationFile # Download the license registration file from VCF Operations
-            # Write-Host "Manually upload the registration file to Business Console and download the verification file"
-            # pause
-            # Import-VerificationFile
-            # Get-ConfirmationFile
+            Import-LicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
 
         }
     } else {
