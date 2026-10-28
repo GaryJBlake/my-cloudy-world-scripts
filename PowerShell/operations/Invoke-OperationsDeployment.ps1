@@ -1,30 +1,72 @@
-<#
-    .SYNOPSIS
-    Deployment of VCF Operations and License Server Appliances
-
-    .DESCRIPTION
-    The Invoke-OperationsDeployment cmdlet is a single function to deploy and configure VCF Operations and
-    License Server.
-
-    .EXAMPLE
-    Invoke-OperationsDeployment -jsonFile .\operationsDeploySpec.json
-    This example deploy and configure VCF Operations and License Server using the JSON spec supplied.
-
-    .PARAMETER jsonFile
-    The path to the JSON specification file to be used.
-#>
-
 Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$jsonFile
+    [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$jsonPath
 )
-
-$solutionName = "VCF Operations and License Server"
 
 # Store default preference
 $previousProgressPreference = $ProgressPreference
 # Suppress native cmdlet progress bars
 $ProgressPreference = 'SilentlyContinue'
 
+$solutionName = "VCF Operations Installation"
+
+function Start-OperationsInstall {
+    Try {
+        $menuHeader = "$solutionName"
+
+        $headingItem01 = "VCF Operations and License Server Deployment"
+        $menuitem01 = "Generate Public and Private Keys"
+        $menuitem02 = "VCF Operations and License Server Deployment"
+        $menuitem03 = "Register Keys and Install License File"
+
+        Do {
+            Clear-Host
+            Write-Host ""; Write-Host -Object $menuHeader -ForegroundColor Magenta
+
+            Write-Host ""; Write-Host -Object " $headingItem01" -ForegroundColor Yellow; Write-Host ""
+            Write-Host -Object " 01. $menuItem01" -ForegroundColor White
+            Write-Host -Object " 02. $menuItem02" -ForegroundColor White
+            Write-Host -Object " 03. $menuItem03" -ForegroundColor White
+
+            Write-Host -Object ''
+            $menuInput = Read-Host -Prompt ' Select Option (or Q to Quit) to Return to Previous Menu'
+            $menuInput = $MenuInput -replace "`t|`n|`r", ""
+            if ($MenuInput -like "0*") { $MenuInput = ($MenuInput -split ("0"), 2)[1] }
+            Switch ($menuInput) {
+                1 {
+                    if (!$headlessPassed) { Clear-Host }; Write-Host `n " $menuTitle" -Foregroundcolor Cyan; Write-Host ''
+                    Invoke-PublicPrivateKey -jsonFile $jsonPath
+                    waitKey
+                }
+                2 {
+                    if (!$headlessPassed) { Clear-Host }; Write-Host `n " $menuTitle" -Foregroundcolor Cyan; Write-Host ''
+                    Invoke-OperationsDeployment -jsonFile $jsonPath
+                    waitKey
+                }
+                3 {
+                    if (!$headlessPassed) { Clear-Host }; Write-Host `n " $menuTitle" -Foregroundcolor Cyan; Write-Host ''
+                    Invoke-OperationsLicenseInstall
+                    waitKey
+                }
+                Q {
+                    if (!$headlessPassed) { Clear-Host }
+                    Break
+                }
+            }
+        }
+        Until ($MenuInput -eq 'q')
+    } Catch {
+        Debug-ExceptionWriter -object $_
+    }
+}
+
+function waitKey {
+    Write-Host ''; Write-Host -Object ' Press any key to continue/return to menu...' -ForegroundColor Yellow; Write-Host '';
+    if ($headlessPassed) {
+        $response = if (!$clioptions) { Read-Host } else { "" }
+    } else {
+        $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+    }
+}
 
 function Test-VsphereAuthentication {
     param (
@@ -1868,7 +1910,7 @@ function Import-LicenseFile {
         if (-not (Test-Path -Path $licenseFile -PathType Leaf)) {
             Write-Host "[x] '$licenseFile -PathType' is not a valid file." -ForegroundColor Red
         } else {
-            Write-Host "[+] Attempting to upload the license file to VCF Operations ..."
+            Write-Host "[+] Attempting to upload the license file to VCF Operations ..." -ForegroundColor Cyan
 
             $internalHeaders = @{}
             foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
@@ -1881,7 +1923,7 @@ function Import-LicenseFile {
             }
 
             # Upload the file
-            $Global:uploadResults = Invoke-RestMethod -Method POST `
+            $uploadResults = Invoke-RestMethod -Method POST `
                 -Uri "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/registration/offline/response" `
                 -Headers $internalHeaders `
                 -Form $uploadForm `
@@ -1894,56 +1936,122 @@ function Import-LicenseFile {
     }
 }
 
-# Main Script
+function Invoke-PublicPrivateKey {
 
-Try {
-    Write-Host "[+] Starting the Deployment of $solutionName" -ForegroundColor Cyan
-    if (Test-Path -Path $jsonFile) {
-        $Global:jsonInput = (Get-Content -Path $jsonFile) | ConvertFrom-Json
-        if (Test-VsphereAuthentication -server $jsonInput.vcenter.fqdn -user $jsonInput.vcenter.username -pass $jsonInput.vcenter.password) {
-            Deploy-VCFOperationsAppliance # Attempt to deploy the OVA and create a new VM and power it on
-            Wait-OperationsApplianceReady -IPAddress $jsonInput.operations.master.fqdn | Out-Null # Poll the powered on VM checking the Web service availability
+    Param (
+            [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$jsonFile = ".\operationsDeployment.json"
+    )
 
-            $vmName = $fqdn -replace '\..*$', ''
-            $vm = Get-VM -Name ($jsonInput.operations.master.fqdn -replace '\..*$', '') -ErrorAction SilentlyContinue
-            Wait-OperationsFirstbootComplete -VM $vm -GuestUser root -GuestPassword $jsonInput.operations.rootPassword  | Out-Null
+    # Generate Private and Public Keys and Import into VCF Operations & License Server
+    New-RsaKeyPair -OutputDirectory ".\" -Overwrite -PrivateKeyFile ($jsonInput.operations.master.fqdn + "-private_key.pem") -PublicKeyFile ($jsonInput.operations.master.fqdn + "-public_key.pem") -CombinedKeyFile ($jsonInput.operations.master.fqdn + "-keypair.pem")
+    New-RsaKeyPair -OutputDirectory ".\" -Overwrite -PrivateKeyFile ($jsonInput.licenseServer.fqdn + "-private_key.pem") -PublicKeyFile ($jsonInput.licenseServer.fqdn + "-public_key.pem") -CombinedKeyFile ($jsonInput.licenseServer.fqdn + "-keypair.pem")
+}
 
-            # Retrieve VCF Operations SHA-256 Thumbprint
-            $thumbprintInfo = Get-VCFNodeThumbprint -FQDN $jsonInput.operations.master.fqdn
-            $thumbprint = $thumbprintInfo.SHA256
+function Invoke-OperationsDeployment {
+    <#
+        .SYNOPSIS
+        Deployment of VCF Operations and License Server Appliances
 
-            # Call New-VCFClusterPayload to create the JSON payload for the VCF Operations initialization
-            $jsonPayload = New-VCFClusterPayload -fqdn $jsonInput.operations.master.fqdn -IPAddress $jsonInput.operations.master.ipAddress -thumbprint $thumbprint -AdminPassword $jsonInput.operations.adminPassword -NtpServers $jsonInput.ntpServers
+        .DESCRIPTION
+        The Invoke-OperationsDeployment cmdlet is a single function to deploy and configure VCF Operations and
+        License Server.
 
-            # Initialize VCF Operations 
-            Initialize-Operations -fqdn $jsonInput.operations.master.fqdn -adminPassword $jsonInput.operations.adminPassword -jsonPayload $jsonPayload | Out-Null
-            
-            Request-OperationsToken -fqdn $jsonInput.operations.master.fqdn -username admin -password $jsonInput.operations.adminPassword
-            Set-EulaSetting # Accept the EULA
-            Set-CeipSetting -status DISABLED # Disable the CEIP setting
-            Add-VcenterAdapter -VcenterFqdn $jsonInput.vcenter.fqdn -VcenterUser $jsonInput.vcenter.username -VcenterPass $jsonInput.vcenter.password
+        .EXAMPLE
+        Invoke-OperationsDeployment -jsonFile .\operationsDeploySpec.json
+        This example deploy and configure VCF Operations and License Server using the JSON spec supplied.
 
-            # Deploy and Register a License Server
-            Request-LicenseServerOTK # Request a one time key (OTK) for the registration of the License Server with VCF Operations
-            Deploy-LicenseServerAppliance # Deploy the License Server appliance
+        .PARAMETER jsonFile
+        The path to the JSON specification file to be used.
+    #>
 
-            # Generate Private and Public Keys and Import into VCF Operations & License Server
-            New-RsaKeyPair -OutputDirectory ".\" -Overwrite -PrivateKeyFile ($jsonInput.operations.master.fqdn + "-private_key.pem") -PublicKeyFile ($jsonInput.operations.master.fqdn + "-public_key.pem") -CombinedKeyFile ($jsonInput.operations.master.fqdn + "-keypair.pem")
+    Param (
+            [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$jsonFile = ".\operationsDeployment.json"
+    )
+    # Main Script
+
+    Try {
+        Write-Host "[+] Starting the Deployment of $solutionName" -ForegroundColor Cyan
+        if (Test-Path -Path $jsonFile) {
+            $Global:jsonInput = (Get-Content -Path $jsonFile) | ConvertFrom-Json
+            if (Test-VsphereAuthentication -server $jsonInput.vcenter.fqdn -user $jsonInput.vcenter.username -pass $jsonInput.vcenter.password) {
+                Deploy-VCFOperationsAppliance # Attempt to deploy the OVA and create a new VM and power it on
+                Wait-OperationsApplianceReady -IPAddress $jsonInput.operations.master.fqdn | Out-Null # Poll the powered on VM checking the Web service availability
+
+                $vmName = $fqdn -replace '\..*$', ''
+                $vm = Get-VM -Name ($jsonInput.operations.master.fqdn -replace '\..*$', '') -ErrorAction SilentlyContinue
+                Wait-OperationsFirstbootComplete -VM $vm -GuestUser root -GuestPassword $jsonInput.operations.rootPassword  | Out-Null
+
+                # Retrieve VCF Operations SHA-256 Thumbprint
+                $thumbprintInfo = Get-VCFNodeThumbprint -FQDN $jsonInput.operations.master.fqdn
+                $thumbprint = $thumbprintInfo.SHA256
+
+                # Call New-VCFClusterPayload to create the JSON payload for the VCF Operations initialization
+                $jsonPayload = New-VCFClusterPayload -fqdn $jsonInput.operations.master.fqdn -IPAddress $jsonInput.operations.master.ipAddress -thumbprint $thumbprint -AdminPassword $jsonInput.operations.adminPassword -NtpServers $jsonInput.ntpServers
+
+                # Initialize VCF Operations 
+                Initialize-Operations -fqdn $jsonInput.operations.master.fqdn -adminPassword $jsonInput.operations.adminPassword -jsonPayload $jsonPayload | Out-Null
+                
+                Request-OperationsToken -fqdn $jsonInput.operations.master.fqdn -username admin -password $jsonInput.operations.adminPassword
+                Set-EulaSetting # Accept the EULA
+                Set-CeipSetting -status DISABLED # Disable the CEIP setting
+                Add-VcenterAdapter -VcenterFqdn $jsonInput.vcenter.fqdn -VcenterUser $jsonInput.vcenter.username -VcenterPass $jsonInput.vcenter.password
+
+                # Deploy and Register a License Server
+                Request-LicenseServerOTK # Request a one time key (OTK) for the registration of the License Server with VCF Operations
+                Deploy-LicenseServerAppliance # Deploy the License Server appliance
+
+            }
+        } else {
+            Write-Host "[x] JSON Specification file ($jsonFile): File Not Found" -ForegroundColor Red
+        }
+    } Catch {
+        Write-Error $_.Exception.Message
+    }
+}
+
+function Invoke-OperationsLicenseInstall {
+    <#
+        .SYNOPSIS
+        Deployment of VCF Operations and License Server Appliances
+
+        .DESCRIPTION
+        The Invoke-OperationsLicenseInstall cmdlet is a single function to deploy and configure VCF Operations and
+        License Server.
+
+        .EXAMPLE
+        Invoke-OperationsLicenseInstall -jsonFile .\operationsDeploySpec.json
+        This example deploy and configure VCF Operations and License Server using the JSON spec supplied.
+
+        .PARAMETER jsonFile
+        The path to the JSON specification file to be used.
+    #>
+
+    Param (
+            [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$jsonFile = ".\operationsDeployment.json"
+    )
+    # Main Script
+
+    Try {
+        Write-Host "[+] Starting the Deployment of $solutionName" -ForegroundColor Cyan
+        if (Test-Path -Path $jsonFile) {
+            $Global:jsonInput = (Get-Content -Path $jsonFile) | ConvertFrom-Json
+
+            # Import into VCF Operations & License Server
             Install-OperationsKeyPair -VcfOpsHost $jsonInput.operations.master.fqdn -Username admin -Password $jsonInput.operations.adminPassword -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -SkipCertificateCheck
-            
-            New-RsaKeyPair -OutputDirectory ".\" -Overwrite -PrivateKeyFile ($jsonInput.licenseServer.fqdn + "-private_key.pem") -PublicKeyFile ($jsonInput.licenseServer.fqdn + "-public_key.pem") -CombinedKeyFile ($jsonInput.licenseServer.fqdn + "-keypair.pem")
-            Install-LicenseServerKey -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -PrivateKeyPemFilePath ($jsonInput.licenseServer.fqdn + "-private_key.pem")
+            Install-LicenseServerKey -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $jsonInput.licenseServer.apiKey -PrivateKeyPemFilePath ($jsonInput.licenseServer.fqdn + "-private_key.pem")
 
             # License the system
             Import-LicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
 
+        } else {
+            Write-Host "[x] JSON Specification file ($jsonFile): File Not Found" -ForegroundColor Red
         }
-    } else {
-        Write-Host "[x] JSON Specification file ($jsonFile): File Not Found" -ForegroundColor Red
+    } Catch {
+        Write-Error $_.Exception.Message
     }
-} Catch {
-    Write-Error $_.Exception.Message
 }
+
+Start-OperationsInstall
 
 # Restore default preference
 $ProgressPreference = $previousProgressPreference
