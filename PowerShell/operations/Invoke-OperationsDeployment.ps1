@@ -1499,15 +1499,6 @@ function New-RsaKeyPair {
 function Install-OperationsKeyPair {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true, HelpMessage = "VCF Operations FQDN or IP address")]
-        [string]$VcfOpsHost,
-
-        [Parameter(Mandatory = $true)]
-        [String]$Username,
-
-        [Parameter(Mandatory = $true)]
-        [String]$Password,
-
         [Parameter(Mandatory = $true, HelpMessage = "Path to the combined public/private keypair .pem file")]
         [Alias("PemPath", "FilePath")]
         [string]$KeypairPath,
@@ -1692,13 +1683,13 @@ function Install-OperationsKeyPair {
     }
 }
 
-function Install-LicenseServerKey {
+function Install-LicenseServerKeyPair {
     <#
     .SYNOPSIS
-        Uploads/registers a private key PEM file to the VCF License Server identity key endpoint.
+        Uploads/registers a key pair PEM file to the VCF License Server identity key endpoint.
 
     .DESCRIPTION
-        This script/function posts a private key file to the VCF License Server identity API endpoint
+        This script/function posts a key pair file to the VCF License Server identity API endpoint
         (/lss/external/api/v1/identity/key) using X-API-Key authentication header.
 
     .PARAMETER LicenseServerFqdn
@@ -1707,14 +1698,14 @@ function Install-LicenseServerKey {
     .PARAMETER ApiKey
         The API key for authentication via the X-API-Key header. Default: "API-20261027-CD0EA41F964A2C23ADD560A6".
 
-    .PARAMETER PrivateKeyPemFilePath
+    .PARAMETER KeyPairPemFilePath
         Path to the private key PEM file. Default: "./sfo-lc01.sfo.rainpole.io-private_key.pem".
 
     .PARAMETER SkipCertificateCheck
         Switch parameter to bypass SSL/TLS certificate validation. Default: Enabled.
 
     .EXAMPLE
-        Install-LicenseServerKey -LicenseServerFqdn "sfo-lc01.sfo.rainpole.io" -ApiKey "API-20261027-CD0EA41F964A2C23ADD560A6" -PrivateKeyPemFilePath "./sfo-lc01.sfo.rainpole.io-private_key.pem"
+        Install-LicenseServerKeyPair -LicenseServerFqdn "sfo-lc01.sfo.rainpole.io" -ApiKey "API-20261027-CD0EA41F964A2C23ADD560A6" -KeyPairPemFilePath "./sfo-lc01.sfo.rainpole.io-private_key.pem"
     #>
     
     [CmdletBinding()]
@@ -1726,18 +1717,18 @@ function Install-LicenseServerKey {
         [string]$ApiKey,
 
         [Parameter(Mandatory = $false, Position = 2)]
-        [string]$PrivateKeyPemFilePath,
+        [string]$KeyPairPemFilePath,
 
         [Parameter(Mandatory = $false)]
         [switch]$SkipCertificateCheck = $true
     )
 
     process {
-        if (-not (Test-Path -Path $PrivateKeyPemFilePath)) {
-            throw "Private key PEM file was not found at path: '$PrivateKeyPemFilePath'"
+        if (-not (Test-Path -Path $KeyPairPemFilePath)) {
+            throw "Private key PEM file was not found at path: '$KeyPairPemFilePath'"
         }
 
-        $pemItem = Get-Item -Path $PrivateKeyPemFilePath
+        $pemItem = Get-Item -Path $KeyPairPemFilePath
         $licenseServerHeaders = @{
             "X-API-Key" = $ApiKey
         }
@@ -1755,7 +1746,7 @@ function Install-LicenseServerKey {
             $restParams["SkipCertificateCheck"] = $true
         }
 
-        Write-Host "[+] Uploading private key '$PrivateKeyPemFilePath' to '$uri'..."
+        Write-Host "[+] Uploading private key '$KeyPairPemFilePath' to '${LicenseServerFqdn}'..."
         return Invoke-RestMethod @restParams
     }
 }
@@ -1901,14 +1892,14 @@ function Get-ConfirmationFile {
     }
 }
 
-function Import-LicenseFile {
+function Import-OperationsLicenseFile {
     param (
         [Parameter (Mandatory = $true)] [String]$licenseFile
     )
 
     try {
         if (-not (Test-Path -Path $licenseFile -PathType Leaf)) {
-            Write-Host "[x] '$licenseFile -PathType' is not a valid file." -ForegroundColor Red
+            Write-Host "[x] '$licenseFile' is not a valid file." -ForegroundColor Red
         } else {
             Write-Host "[+] Attempting to upload the license file to VCF Operations ..." -ForegroundColor Cyan
 
@@ -1922,6 +1913,8 @@ function Import-LicenseFile {
                 file = Get-Item -Path $licenseFile
             }
 
+            #-Uri "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/registration/offline/response" `
+            #-Uri "https://${operationsFqdn}/suite-api/internal/api/license-manager/entitlements" `
             # Upload the file
             $uploadResults = Invoke-RestMethod -Method POST `
                 -Uri "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/registration/offline/response" `
@@ -1934,6 +1927,15 @@ function Import-LicenseFile {
     } catch {
         Write-Error $_.Exception.Message
     }
+}
+
+function Get-LicenseRegistrationStatus {
+
+    $internalHeaders = @{}
+    foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+    $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+    Invoke-RestMethod -Method Get -Uri "https://$operationsFqdn/suite-api/internal/extension/vcf-license-cloud-integration/license-servers" -Headers $internalHeaders -SkipCertificateCheck
 }
 
 function Invoke-PublicPrivateKey {
@@ -2036,12 +2038,20 @@ function Invoke-OperationsLicenseInstall {
         if (Test-Path -Path $jsonFile) {
             $Global:jsonInput = (Get-Content -Path $jsonFile) | ConvertFrom-Json
 
-            # Import into VCF Operations & License Server
-            Install-OperationsKeyPair -VcfOpsHost $jsonInput.operations.master.fqdn -Username admin -Password $jsonInput.operations.adminPassword -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -SkipCertificateCheck
-            Install-LicenseServerKey -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $jsonInput.licenseServer.apiKey -PrivateKeyPemFilePath ($jsonInput.licenseServer.fqdn + "-private_key.pem")
+            # Authenticate to VCF Operations
+            Request-OperationsToken -fqdn $jsonInput.operations.master.fqdn -username admin -password $jsonInput.operations.adminPassword
+
+            # Import the License Server Key Pair into VCF Operations and License Server
+            $licenseServerVmName = $jsonInput.licenseServer.fqdn.Split('.')[0]
+            $licenseServerApiKey = Get-VmApiKey -VM $licenseServerVmName
+            Install-OperationsKeyPair -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -SkipCertificateCheck
+            Install-LicenseServerKeyPair -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -KeyPairPemFilePath ($jsonInput.licenseServer.fqdn + "-keypair.pem")
+
+
+            #Install-LicenseServerKey -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -PrivateKeyPemFilePath ($jsonInput.licenseServer.fqdn + "-private_key.pem")
 
             # License the system
-            Import-LicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
+            #Import-OperationsLicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
 
         } else {
             Write-Host "[x] JSON Specification file ($jsonFile): File Not Found" -ForegroundColor Red
