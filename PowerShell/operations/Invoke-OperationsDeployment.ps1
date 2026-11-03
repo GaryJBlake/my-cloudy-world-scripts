@@ -1985,6 +1985,38 @@ function Get-LicenseRegistrationStatus {
     Invoke-RestMethod -Method Get -Uri "https://$operationsFqdn/suite-api/internal/extension/vcf-license-cloud-integration/license-servers" -Headers $internalHeaders -SkipCertificateCheck
 }
 
+function Get-OperationsLicenseServers {
+    # Construct Internal Headers
+    $internalHeaders = @{}
+    foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+    $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
+    $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+    # Candidate URLs (with and without /api)
+    $candidateUrls = @(
+        "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/license-servers",
+        "https://${operationsFqdn}/suite-api/api/internal/extension/vcf-license-cloud-integration/license-servers"
+    )
+
+    $success = $false
+    foreach ($url in $candidateUrls) {
+        try {
+            $response = Invoke-RestMethod -Uri $url -Method Get -Headers $internalHeaders -SkipCertificateCheck
+            $response
+            #$response | Format-Table -Property name, fqdn, ip, registrationStatus, connectivityStatus, lastLicenseRefreshDate
+            $success = $true
+            break
+        }
+        catch {
+            Write-Host "[!] Failed on URL '$url': $_" -ForegroundColor Yellow
+        }
+    }
+
+    if (-not $success) {
+        Write-Error "Failed to reach License Servers endpoint on all candidate URLs."
+    }
+}
+
 function Invoke-PublicPrivateKey {
 
     Param (
@@ -2092,10 +2124,29 @@ function Invoke-OperationsLicenseInstall {
             $licenseServerVmName = $jsonInput.licenseServer.fqdn.Split('.')[0]
             $licenseServerApiKey = Get-VmApiKey -VM $licenseServerVmName
             Install-OperationsKeyPair -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -VerifyStatus -SkipCertificateCheck
-            Install-LicenseServerKeyPair -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -KeyPairPemFilePath ($jsonInput.licenseServer.fqdn + "-keypair.pem") -VerifyStatus
+            Install-LicenseServerKeyPair -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -KeyPairPemFilePath ($jsonInput.licenseServer.fqdn + "-keypair.pem")
 
+            $maxAttempts = 30
+            $attempt = 0
+            $intervalSeconds = 5
 
-            #Install-LicenseServerKey -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -PrivateKeyPemFilePath ($jsonInput.licenseServer.fqdn + "-private_key.pem")
+            do {
+                $attempt++
+                $status = (Get-OperationsLicenseServers).registrationStatus
+                Write-Host "[x] Attempt [$attempt/$maxAttempts] Status: $status" -ForegroundColor Cyan
+
+                if ($status -eq 'PRIVATE') {
+                    Write-Host "[✓] Success: Registration status reached PRIVATE." -ForegroundColor Green
+                    break
+                }
+
+                if ($attempt -ge $maxAttempts) {
+                    Write-Warning "Timeout reached after $maxAttempts attempts without reaching PRIVATE."
+                    break
+                }
+
+                Start-Sleep -Seconds $intervalSeconds
+            } while ($true)
 
             # License the system
             #Import-OperationsLicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
