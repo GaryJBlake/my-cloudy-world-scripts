@@ -44,7 +44,7 @@ function Start-OperationsInstall {
                 }
                 3 {
                     if (!$headlessPassed) { Clear-Host }; Write-Host `n " $menuTitle" -Foregroundcolor Cyan; Write-Host ''
-                    Invoke-OperationsLicenseInstall
+                    Invoke-OperationsLicenseInstall -jsonFile $jsonPath
                     waitKey
                 }
                 Q {
@@ -1499,19 +1499,15 @@ function New-RsaKeyPair {
 function Install-OperationsKeyPair {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true, HelpMessage = "Path to the combined public/private keypair .pem file")]
-        [Alias("PemPath", "FilePath")]
-        [string]$KeypairPath,
-
-        [Parameter(Mandatory = $false)]
-        [switch]$VerifyStatus,
-
-        [Parameter(Mandatory = $false)]
-        [switch]$SkipCertificateCheck
+        [Parameter (Mandatory = $true, HelpMessage = "Path to the combined public/private keypair .pem file")] [Alias("PemPath", "FilePath")] [string]$KeypairPath,
+        [Parameter (Mandatory = $false)] [switch]$VerifyStatus,
+        [Parameter (Mandatory = $false)] [switch]$SkipCertificateCheck
     )
 
     process {
         try {
+            Write-Host "[+] Attempting to upload key pair to VCF Operations..." -ForegroundColor Cyan
+
             # ---------------------------------------------------------
             # Step 1: Verify Keypair File Existence
             # ---------------------------------------------------------
@@ -1584,7 +1580,6 @@ function Install-OperationsKeyPair {
             # ---------------------------------------------------------
             # Steps 3-5: Upload Key Pair (/internal/license-manager/identity/keypair)
             # ---------------------------------------------------------
-            Write-Host "[+] Uploading key pair to VCF Operations..." -ForegroundColor Cyan
 
             $candidateUploadUrls = @(
                 "https://${operationsFqdn}/suite-api/api/internal/license-manager/identity/keypair",
@@ -1645,7 +1640,7 @@ function Install-OperationsKeyPair {
             # ---------------------------------------------------------
             $statusResult = $null
             if ($VerifyStatus) {
-                Write-Host "[+] Verifying registration and private mode status..." -ForegroundColor Cyan
+                Write-Host "[+] Verifying VCF Operations registration and private mode status..." -ForegroundColor Cyan
                 
                 $candidateStatusUrls = @(
                     "https://${operationsFqdn}/suite-api/api/internal/license-manager/registration/status",
@@ -1666,8 +1661,12 @@ function Install-OperationsKeyPair {
                         }
 
                         $statusResult = Invoke-RestMethod @splatStatus
-                        Write-Host "[✓] Registration Status Response:" -ForegroundColor Yellow
-                        $statusResult | Format-List | Out-String | Write-Host
+                        if ($($statusResult.connectivityMode) -eq "PRIVATE") {
+                            Write-Host "[✓] Registration Status Response: $($statusResult.connectivityMode)" -ForegroundColor Green
+                        } else {
+                            Write-Host "[x] Registration Status Response: $($statusResult.connectivityMode)" -ForegroundColor Red
+                        }
+                        #$statusResult | Format-List | Out-String | Write-Host
                         break
                     }
                     catch {
@@ -1684,70 +1683,118 @@ function Install-OperationsKeyPair {
 }
 
 function Install-LicenseServerKeyPair {
-    <#
-    .SYNOPSIS
-        Uploads/registers a key pair PEM file to the VCF License Server identity key endpoint.
-
-    .DESCRIPTION
-        This script/function posts a key pair file to the VCF License Server identity API endpoint
-        (/lss/external/api/v1/identity/key) using X-API-Key authentication header.
-
-    .PARAMETER LicenseServerFqdn
-        The FQDN of the License Server. Default: "sfo-lc01.sfo.rainpole.io".
-
-    .PARAMETER ApiKey
-        The API key for authentication via the X-API-Key header. Default: "API-20261027-CD0EA41F964A2C23ADD560A6".
-
-    .PARAMETER KeyPairPemFilePath
-        Path to the private key PEM file. Default: "./sfo-lc01.sfo.rainpole.io-private_key.pem".
-
-    .PARAMETER SkipCertificateCheck
-        Switch parameter to bypass SSL/TLS certificate validation. Default: Enabled.
-
-    .EXAMPLE
-        Install-LicenseServerKeyPair -LicenseServerFqdn "sfo-lc01.sfo.rainpole.io" -ApiKey "API-20261027-CD0EA41F964A2C23ADD560A6" -KeyPairPemFilePath "./sfo-lc01.sfo.rainpole.io-private_key.pem"
-    #>
     
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $false, Position = 0)]
-        [string]$LicenseServerFqdn,
-
-        [Parameter(Mandatory = $false, Position = 1)]
-        [string]$ApiKey,
-
-        [Parameter(Mandatory = $false, Position = 2)]
-        [string]$KeyPairPemFilePath,
-
-        [Parameter(Mandatory = $false)]
-        [switch]$SkipCertificateCheck = $true
+        [Parameter (Mandatory = $false, Position = 0)] [string]$LicenseServerFqdn,
+        [Parameter (Mandatory = $false, Position = 1)] [string]$ApiKey,
+        [Parameter (Mandatory = $false, Position = 2)] [string]$KeyPairPemFilePath,
+        [Parameter (Mandatory = $false)] [switch]$VerifyStatus,
+        [Parameter (Mandatory = $false)] [switch]$SkipCertificateCheck = $true
     )
 
     process {
-        if (-not (Test-Path -Path $KeyPairPemFilePath)) {
-            throw "Private key PEM file was not found at path: '$KeyPairPemFilePath'"
+        try {
+            Write-Host "[+] Attempting to upload key pair to License Server..." -ForegroundColor Cyan
+
+            # ---------------------------------------------------------
+            # Step 1: Verify Keypair File Existence
+            # ---------------------------------------------------------
+            Write-Host "[+] Validating the existence of the Key Pair file for '$LicenseServerFqdn'..." -ForegroundColor Cyan
+            
+            $targetPath = $KeyPairPemFilePath
+            if (-not (Test-Path -Path $targetPath)) {
+                $fileNameOnly = [System.IO.Path]::GetFileName($KeyPairPemFilePath)
+                $cwdPath = Join-Path -Path (Get-Location).Path -ChildPath $fileNameOnly
+                $tmpPath = Join-Path -Path "/tmp" -ChildPath $fileNameOnly
+
+                if (Test-Path -Path $cwdPath) {
+                    Write-Host "[!] File not found at '$KeyPairPemFilePath', but found in current directory" -ForegroundColor Yellow
+                    $targetPath = $cwdPath
+                } elseif (Test-Path -Path $tmpPath) {
+                    Write-Host "[!] File not found at '$KeyPairPemFilePath', but found in /tmp: '$tmpPath'." -ForegroundColor Yellow
+                    $targetPath = $tmpPath
+                } else {
+                    $currentDir = (Get-Location).Path
+                    throw "Specified keypair PEM file was not found at '$KeyPairPemFilePath'. (Current Working Directory: '$currentDir')"
+                }
+            }
+
+            $resolvedKeypairPath = (Get-Item -Path $targetPath).FullName
+            Write-Host "[✓] Using combined keypair file: $resolvedKeypairPath" -ForegroundColor Green
+
+            # ---------------------------------------------------------
+            # Steps 2: Install Key Pair to License Server
+            # ---------------------------------------------------------
+            if (-not (Test-Path -Path $KeyPairPemFilePath)) {
+                throw "Private key PEM file was not found at path: '$KeyPairPemFilePath'"
+            }
+
+            $pemItem = Get-Item -Path $KeyPairPemFilePath
+            $licenseServerHeaders = @{
+                "X-API-Key" = $ApiKey
+            }
+
+            $uri = "https://${LicenseServerFqdn}/lss/external/api/v1/identity/key"
+
+            $restParams = @{
+                Uri     = $uri
+                Method  = "Post"
+                Headers = $licenseServerHeaders
+                Form    = @{ file = $pemItem }
+            }
+
+            if ($SkipCertificateCheck) {
+                $restParams["SkipCertificateCheck"] = $true
+            }
+
+            Write-Host "[+] Uploading key pair'$KeyPairPemFilePath' to License Server..."  -ForegroundColor Cyan
+            Invoke-RestMethod @restParams | Out-Null
+
+            # ---------------------------------------------------------
+            # Steps 3: Optional Status Verification
+            # ---------------------------------------------------------
+            $statusResult = $null
+            if ($VerifyStatus) {
+                Write-Host "[+] Verifying License Server registration and private mode status..." -ForegroundColor Cyan
+
+                # Construct Internal Headers
+                $internalHeaders = @{}
+                foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+                $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
+                $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+                # Candidate URLs (with and without /api)
+                $candidateUrls = @(
+                    "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/license-servers",
+                    "https://${operationsFqdn}/suite-api/api/internal/extension/vcf-license-cloud-integration/license-servers"
+                )
+
+                $success = $false
+                foreach ($url in $candidateUrls) {
+                    try {
+                        $GLobal:response = Invoke-RestMethod -Uri $url -Method Get -Headers $internalHeaders -SkipCertificateCheck
+                        if ($($response.registrationStatus) -eq "PRIVATE") {
+                            Write-Host "[✓] License Server registration status response: $($response.registrationStatus)" -ForegroundColor Green
+                        } else {
+                            Write-Host "[x] License Server registration status response: $($response.registrationStatus)" -ForegroundColor Red
+                        }
+                        $success = $true
+                        break
+                    }
+                    catch {
+                        Write-Host "[!] Failed on URL '$url': $_" -ForegroundColor Yellow
+                    }
+                }
+
+                if (-not $success) {
+                    Write-Error "Failed to reach License Servers endpoint on all candidate URLs."
+                }
+            }
+        } catch {
+            Write-Error "Error uploading key pair to VCF Operations: $_"
+            throw $_
         }
-
-        $pemItem = Get-Item -Path $KeyPairPemFilePath
-        $licenseServerHeaders = @{
-            "X-API-Key" = $ApiKey
-        }
-
-        $uri = "https://${LicenseServerFqdn}/lss/external/api/v1/identity/key"
-
-        $restParams = @{
-            Uri     = $uri
-            Method  = "Post"
-            Headers = $licenseServerHeaders
-            Form    = @{ file = $pemItem }
-        }
-
-        if ($SkipCertificateCheck) {
-            $restParams["SkipCertificateCheck"] = $true
-        }
-
-        Write-Host "[+] Uploading private key '$KeyPairPemFilePath' to '${LicenseServerFqdn}'..."
-        return Invoke-RestMethod @restParams
     }
 }
 
@@ -1967,7 +2014,7 @@ function Invoke-OperationsDeployment {
     #>
 
     Param (
-            [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$jsonFile = ".\operationsDeployment.json"
+            [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$jsonFile = ".\operationsDeployment.json"
     )
     # Main Script
 
@@ -2029,12 +2076,12 @@ function Invoke-OperationsLicenseInstall {
     #>
 
     Param (
-            [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$jsonFile = ".\operationsDeployment.json"
+            [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$jsonFile = ".\operationsDeployment.json"
     )
     # Main Script
 
     Try {
-        Write-Host "[+] Starting the Deployment of $solutionName" -ForegroundColor Cyan
+        Write-Host "[+] Starting the $solutionName of Key Pair and License File" -ForegroundColor Cyan
         if (Test-Path -Path $jsonFile) {
             $Global:jsonInput = (Get-Content -Path $jsonFile) | ConvertFrom-Json
 
@@ -2044,8 +2091,8 @@ function Invoke-OperationsLicenseInstall {
             # Import the License Server Key Pair into VCF Operations and License Server
             $licenseServerVmName = $jsonInput.licenseServer.fqdn.Split('.')[0]
             $licenseServerApiKey = Get-VmApiKey -VM $licenseServerVmName
-            Install-OperationsKeyPair -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -SkipCertificateCheck
-            Install-LicenseServerKeyPair -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -KeyPairPemFilePath ($jsonInput.licenseServer.fqdn + "-keypair.pem")
+            Install-OperationsKeyPair -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -VerifyStatus -SkipCertificateCheck
+            Install-LicenseServerKeyPair -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -KeyPairPemFilePath ($jsonInput.licenseServer.fqdn + "-keypair.pem") -VerifyStatus
 
 
             #Install-LicenseServerKey -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -PrivateKeyPemFilePath ($jsonInput.licenseServer.fqdn + "-private_key.pem")
