@@ -899,6 +899,7 @@ function Start-OperationsAdapterCollection {
     return $allStarted
 }
 
+
 function Add-VcenterAdapter {
 <#
     .SYNOPSIS
@@ -1496,6 +1497,76 @@ function New-RsaKeyPair {
     }
 }
 
+function Get-VmApiKey {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true, Position = 0)]
+        [psobject]$VM
+    )
+
+    process {
+        # 1. Resolve VM object if a string VM name was provided
+        $vmObject = $null
+        if ($VM -is [string]) {
+            if (-not (Get-Command -Name Get-VM -ErrorAction SilentlyContinue)) {
+                throw "VMware PowerCLI module (VMware.VimAutomation.Core) is required when passing VM by name string."
+            }
+            Write-Verbose "Fetching VM object for name '$VM'..."
+            $vmObject = Get-VM -Name $VM -ErrorAction Stop
+        } else {
+            $vmObject = $VM
+        }
+
+        if (-not $vmObject) {
+            throw "Invalid or null VM input provided."
+        }
+
+        # Determine VM name for log/warning outputs
+        $vmName = if ($vmObject.Name) { $vmObject.Name } else { $vmObject.ToString() }
+
+        # 2. Access VAppConfig from PowerCLI VirtualMachine object or vSphere API MoRef object
+        $vAppConfig = $null
+        if ($vmObject.PSObject.Properties['ExtensionData'] -and $vmObject.ExtensionData.Config) {
+            $vAppConfig = $vmObject.ExtensionData.Config.VAppConfig
+        } elseif ($vmObject.PSObject.Properties['Config']) {
+            $vAppConfig = $vmObject.Config.VAppConfig
+        }
+
+        if (-not $vAppConfig -or -not $vAppConfig.Property) {
+            Write-Warning "No vApp options/properties are configured on VM '$vmName'."
+            return $null
+        }
+
+        # 3. Locate the 'api_key' vApp property
+        $targetKey = "api_key"
+        $property = $vAppConfig.Property | Where-Object {
+            $_.Id -ieq $targetKey -or 
+            $_.Id -ieq "guestinfo.$targetKey" -or
+            $_.Label -ieq $targetKey
+        } | Select-Object -First 1
+
+        # Fallback substring search if key formatted with prefix/suffix (e.g. guestinfo.api_key)
+        if (-not $property) {
+            $property = $vAppConfig.Property | Where-Object {
+                $_.Id -ilike "*$targetKey*"
+            } | Select-Object -First 1
+        }
+
+        if (-not $property) {
+            Write-Warning "vApp option 'api_key' was not found on VM '$vmName'."
+            return $null
+        }
+
+        # 4. Extract and return the configured value (or DefaultValue if value field is empty)
+        $value = $property.Value
+        if ([string]::IsNullOrEmpty($value)) {
+            $value = $property.DefaultValue
+        }
+
+        return $value
+    }
+}
+
 function Install-OperationsKeyPair {
     [CmdletBinding()]
     param(
@@ -1945,31 +2016,32 @@ function Import-OperationsLicenseFile {
     )
 
     try {
-        if (-not (Test-Path -Path $licenseFile -PathType Leaf)) {
-            Write-Host "[x] '$licenseFile' is not a valid file." -ForegroundColor Red
-        } else {
-            Write-Host "[+] Attempting to upload the license file to VCF Operations ..." -ForegroundColor Cyan
+        if (-Not (Get-OperationsLicense)) {
+            if (-not (Test-Path -Path $licenseFile -PathType Leaf)) {
+                Write-Host "[x] '$licenseFile' is not a valid file." -ForegroundColor Red
+            } else {
+                Write-Host "[+] Attempting to upload the license file to VCF Operations ..." -ForegroundColor Cyan
 
-            $internalHeaders = @{}
-            foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
-            $internalHeaders["X-Ops-API-use-unsupported"] = "true"
-            $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
+                $internalHeaders = @{}
+                foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+                $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+                $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
 
-            # Prepare the multipart form data payload using Get-Item
-            $uploadForm = @{
-                file = Get-Item -Path $licenseFile
+                # Prepare the multipart form data payload using Get-Item
+                $uploadForm = @{
+                    file = Get-Item -Path $licenseFile
+                }
+
+                $uploadResults = Invoke-RestMethod -Method POST `
+                    -Uri "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/registration/offline/response" `
+                    -Headers $internalHeaders `
+                    -Form $uploadForm `
+                    -SkipCertificateCheck
+
+                Write-Host "[✓] Uploaded license file to VCF Operations successfully" -ForegroundColor Green
             }
-
-            #-Uri "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/registration/offline/response" `
-            #-Uri "https://${operationsFqdn}/suite-api/internal/api/license-manager/entitlements" `
-            # Upload the file
-            $uploadResults = Invoke-RestMethod -Method POST `
-                -Uri "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/registration/offline/response" `
-                -Headers $internalHeaders `
-                -Form $uploadForm `
-                -SkipCertificateCheck
-
-            Write-Host "[✓] Uploaded license file to VCF Operations successfully" -ForegroundColor Green
+        } else {
+            Write-Host "[!] Licenses already exist in VCF Operations" -ForegroundColor Yellow
         }
     } catch {
         Write-Error $_.Exception.Message
@@ -2014,6 +2086,88 @@ function Get-OperationsLicenseServers {
 
     if (-not $success) {
         Write-Error "Failed to reach License Servers endpoint on all candidate URLs."
+    }
+}
+
+function Wait-LicenseStatus{
+    $maxAttempts = 30
+    $attempt = 0
+    $intervalSeconds = 5
+
+    do {
+        $attempt++
+        $status = (Get-OperationsLicenseServers).registrationStatus
+        
+        # Pad with trailing spaces to clear any remnants from longer previous text
+        Write-Host "`r[!] Current Status: $status" -NoNewline -ForegroundColor Yellow
+        if ($status -eq 'PRIVATE') {
+            Write-Host "`n[✓] Success: Registration status reached PRIVATE." -ForegroundColor Green
+            break
+        }
+
+        if ($attempt -ge $maxAttempts) {
+            Write-Host "" # Move cursor down to prevent Write-Warning from colliding
+            Write-Warning "Timeout reached after $maxAttempts attempts without reaching PRIVATE."
+            break
+        }
+
+        Start-Sleep -Seconds $intervalSeconds
+    } while ($true)
+}
+
+function Get-OperationsLicense {
+
+    $internalHeaders = @{}
+    foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+    $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
+    $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+    Invoke-RestMethod -Method Get -Uri "https://${operationsFqdn}/suite-api/internal/licenses" -Headers $internalHeaders -SkipCertificateCheck
+
+}
+
+function Get-OperationsVcenters {
+
+    $internalHeaders = @{}
+    foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+    $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
+    $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+    (Invoke-RestMethod -Method Get -Uri "https://${operationsFqdn}/suite-api/internal/licenses/vcenter-usages" -Headers $internalHeaders -SkipCertificateCheck).content
+
+}
+
+function Install-OperationsLicense {
+    param (
+        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$vcenterFqdn,
+        [Parameter (Mandatory = $false)] [ValidateSet('vSphere', 'vSAN')] [String]$licenseType
+    )
+
+    Write-Host "[+] Attempting to assign license of type '$licenseType' to vCenter '$vcenterFqdn'..." -ForegroundColor Cyan
+    $internalHeaders = @{}
+    foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+    $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
+    $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+    $vcenters = (Get-OperationsVcenters) | Where-Object {$_.productFamily -eq $licenseType -and $_.vcHost -eq $vcenterFqdn }
+    $licenses = (Get-OperationsLicense) | Where-Object {$_.productFamily -eq $licenseType}
+
+    if ($vcenters) {
+        $body = ConvertTo-Json -InputObject @(
+            @{
+                vcenter = @{
+                    id          = $vcenters.vcId
+                    adapterName = $vcenters.vcAdapterName
+                    host        = $vcenters.vcHost
+                }
+                allocationIds = @($licenses.licenseAllocationId)
+            }
+        ) -Depth 4
+
+        $response = Invoke-RestMethod -Method Post -Uri "https://${operationsFqdn}/suite-api/internal/extension/vcf-entitlement/assign" -Headers $internalHeaders -Body $body -SkipCertificateCheck
+        Write-Host "[+] License of type '$licenseType' assigned to vCenter completed successfully..." -ForegroundColor Green
+    } else {
+        Write-Host "[x] No vCenters found in VCF Operations to assign licenses" -ForegroundColor Red
     }
 }
 
@@ -2125,31 +2279,13 @@ function Invoke-OperationsLicenseInstall {
             $licenseServerApiKey = Get-VmApiKey -VM $licenseServerVmName
             Install-OperationsKeyPair -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -VerifyStatus -SkipCertificateCheck
             Install-LicenseServerKeyPair -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -KeyPairPemFilePath ($jsonInput.licenseServer.fqdn + "-keypair.pem")
-
-            $maxAttempts = 30
-            $attempt = 0
-            $intervalSeconds = 5
-
-            do {
-                $attempt++
-                $status = (Get-OperationsLicenseServers).registrationStatus
-                Write-Host "[x] Attempt [$attempt/$maxAttempts] Status: $status" -ForegroundColor Cyan
-
-                if ($status -eq 'PRIVATE') {
-                    Write-Host "[✓] Success: Registration status reached PRIVATE." -ForegroundColor Green
-                    break
-                }
-
-                if ($attempt -ge $maxAttempts) {
-                    Write-Warning "Timeout reached after $maxAttempts attempts without reaching PRIVATE."
-                    break
-                }
-
-                Start-Sleep -Seconds $intervalSeconds
-            } while ($true)
+            Wait-LicenseStatus
 
             # License the system
-            #Import-OperationsLicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
+            Import-OperationsLicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
+            # Assign Licenses to vCenter
+            Install-OperationsLicense -vcenterFqdn $jsonInput.vcenter.fqdn -licenseType vSphere
+            Install-OperationsLicense -vcenterFqdn $jsonInput.vcenter.fqdn -licenseType vSAN
 
         } else {
             Write-Host "[x] JSON Specification file ($jsonFile): File Not Found" -ForegroundColor Red
