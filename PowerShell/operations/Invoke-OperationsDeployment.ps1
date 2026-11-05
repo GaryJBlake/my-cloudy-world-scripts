@@ -1,30 +1,72 @@
-<#
-    .SYNOPSIS
-    Deployment of VCF Operations and License Server Appliances
-
-    .DESCRIPTION
-    The Invoke-OperationsDeployment cmdlet is a single function to deploy and configure VCF Operations and
-    License Server.
-
-    .EXAMPLE
-    Invoke-OperationsDeployment -jsonFile .\operationsDeploySpec.json
-    This example deploy and configure VCF Operations and License Server using the JSON spec supplied.
-
-    .PARAMETER jsonFile
-    The path to the JSON specification file to be used.
-#>
-
 Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$jsonFile
+    [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$jsonPath
 )
-
-$solutionName = "VCF Operations and License Server"
 
 # Store default preference
 $previousProgressPreference = $ProgressPreference
 # Suppress native cmdlet progress bars
 $ProgressPreference = 'SilentlyContinue'
 
+$solutionName = "VCF Operations Installation"
+
+function Start-OperationsInstall {
+    Try {
+        $menuHeader = "$solutionName"
+
+        $headingItem01 = "VCF Operations and License Server Deployment"
+        $menuitem01 = "Generate Public and Private Keys"
+        $menuitem02 = "VCF Operations and License Server Deployment"
+        $menuitem03 = "Register Keys and Install License File"
+
+        Do {
+            Clear-Host
+            Write-Host ""; Write-Host -Object $menuHeader -ForegroundColor Magenta
+
+            Write-Host ""; Write-Host -Object " $headingItem01" -ForegroundColor Yellow; Write-Host ""
+            Write-Host -Object " 01. $menuItem01" -ForegroundColor White
+            Write-Host -Object " 02. $menuItem02" -ForegroundColor White
+            Write-Host -Object " 03. $menuItem03" -ForegroundColor White
+
+            Write-Host -Object ''
+            $menuInput = Read-Host -Prompt ' Select Option (or Q to Quit) to Return to Previous Menu'
+            $menuInput = $MenuInput -replace "`t|`n|`r", ""
+            if ($MenuInput -like "0*") { $MenuInput = ($MenuInput -split ("0"), 2)[1] }
+            Switch ($menuInput) {
+                1 {
+                    if (!$headlessPassed) { Clear-Host }; Write-Host `n " $menuTitle" -Foregroundcolor Cyan; Write-Host ''
+                    Invoke-PublicPrivateKey -jsonFile $jsonPath
+                    waitKey
+                }
+                2 {
+                    if (!$headlessPassed) { Clear-Host }; Write-Host `n " $menuTitle" -Foregroundcolor Cyan; Write-Host ''
+                    Invoke-OperationsDeployment -jsonFile $jsonPath
+                    waitKey
+                }
+                3 {
+                    if (!$headlessPassed) { Clear-Host }; Write-Host `n " $menuTitle" -Foregroundcolor Cyan; Write-Host ''
+                    Invoke-OperationsLicenseInstall -jsonFile $jsonPath
+                    waitKey
+                }
+                Q {
+                    if (!$headlessPassed) { Clear-Host }
+                    Break
+                }
+            }
+        }
+        Until ($MenuInput -eq 'q')
+    } Catch {
+        Debug-ExceptionWriter -object $_
+    }
+}
+
+function waitKey {
+    Write-Host ''; Write-Host -Object ' Press any key to continue/return to menu...' -ForegroundColor Yellow; Write-Host '';
+    if ($headlessPassed) {
+        $response = if (!$clioptions) { Read-Host } else { "" }
+    } else {
+        $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+    }
+}
 
 function Test-VsphereAuthentication {
     param (
@@ -47,52 +89,6 @@ function Test-VsphereAuthentication {
         }
     } catch {
         # Do Nothing
-    }
-}
-
-function Request-OperationsToken {
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$fqdn,
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$username,
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$password
-    )
-
-    if ( -not $PsBoundParameters.ContainsKey("username") -or ( -not $PsBoundParameters.ContainsKey("password"))) {
-        $creds = Get-Credential # Request Credentials
-        $username = $creds.UserName.ToString()
-        $password = $creds.GetNetworkCredential().password
-    }
-
-    try {
-        Write-Host "`n[+] Connecting to VCF Operations: '$fqdn'..." -NoNewLine -ForegroundColor Cyan
-        $Global:operationsAppliance = $fqdn
-        $Global:operationsHeaders = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
-        $operationsHeaders.Add("Accept", "application/json")
-        $operationsHeaders.Add("Content-Type", "application/json")
-        $uri = "https://$operationsAppliance/suite-api/api/auth/token/acquire"
-        $body = "{
-        `n  `"username`" : `"$username`",
-        `n  `"authSource`" : `"LOCAL`",
-        `n  `"password`" : `"$password`"
-        `n}"
-        if ($PSEdition -eq 'Core') {
-            $operationsResponse = Invoke-RestMethod -Method POST `
-                -Uri $uri `
-                -Headers $operationsHeaders `
-                -Body $body `
-                -SkipCertificateCheck 
-        } else {
-            $operationsResponse = Invoke-RestMethod -Method POST `
-                -Uri $uri `
-                -Headers $operationsHeaders `
-                -Body $body `
-        }
-        if ($operationsResponse.token) {
-            $operationsHeaders.Add("Authorization", "OpsToken " + $operationsResponse.token)
-            Write-Host "`n[✓] Successfully connected to VCF Operations: $operationsAppliance" -NoNewLine -ForegroundColor Green
-        }
-    } catch {
-        Write-Error $_.Exception.Message
     }
 }
 
@@ -141,7 +137,7 @@ function Deploy-VCFOperationsAppliance {
 
     try {
         # 1. Target Object Validation
-        Write-Host "[+] Validating vSphere target objects..." -ForegroundColor Cyan
+        Write-Host "[+] Validating vSphere target objects for vApp deployment..." -ForegroundColor Cyan
         $vmHost    = Get-VMHost -Name $jsonInput.vcenter.targetEsx -ErrorAction Stop
         $datastore = Get-Datastore -Name $jsonInput.vcenter.datastore -ErrorAction Stop
 
@@ -150,12 +146,12 @@ function Deploy-VCFOperationsAppliance {
 
         if ($existingVm) {
             # Warn and skip import
-            Write-Host "[!] VM '$($jsonInput.operations.master.fqdn -replace '\..*$', '')' already exists on this vCenter. Skipping OVA import" -ForegroundColor Yellow
+            Write-Host "[!] Found existing Virtual Machine '$($jsonInput.operations.master.fqdn -replace '\..*$', '')' in this vCenter. Skipping OVA import" -ForegroundColor Yellow
             $importedVm = $existingVm
         } 
         else {
             # 3. Extract OVF configuration & Import (Only run if VM does NOT exist)
-            Write-Host "[+] Extracting OVF configuration..." -ForegroundColor Cyan
+            Write-Host "[+] Extracting Open Virtualization Format (OVF) configuration for VCF Operations..." -ForegroundColor Cyan
             $ovfConfig = Get-OvfConfiguration -Ovf $jsonInput.operations.ovaPath
 
             # Configure network and system properties
@@ -188,7 +184,7 @@ function Deploy-VCFOperationsAppliance {
             Write-Host "[+] Powering on VM '$($jsonInput.operations.master.fqdn -replace '\..*$', '')'..." -ForegroundColor Cyan
             $importedVm = Start-VM -VM $importedVm -Confirm:$false -ErrorAction Stop
         } else {
-            Write-Host "[!] VM '$($jsonInput.operations.master.fqdn -replace '\..*$', '')' is already powered on" -ForegroundColor Yellow
+            Write-Host "[!] Virtual Machine '$($jsonInput.operations.master.fqdn -replace '\..*$', '')' is already powered on" -ForegroundColor Yellow
         }
 
         # 5. Polling Loop with Timeout for Valid IPv4 Address
@@ -224,7 +220,7 @@ function Deploy-VCFOperationsAppliance {
 
         # 6. Final Status Check
         if ($validIp) {
-            Write-Host "[✓] VM '$($jsonInput.operations.master.fqdn -replace '\..*$', '')' is powered on and reachable at IP: $validIp" -ForegroundColor Green
+            Write-Host "[✓] Virtual Machine '$($jsonInput.operations.master.fqdn -replace '\..*$', '')' is powered on and reachable at IP: $validIp" -ForegroundColor Green
         } else {
             Write-Warning "[!] Timed out after $TimeoutMinutes minutes waiting for a valid IP address."
             Write-Warning "    - Check if VMware Tools booted properly inside the guest OS."
@@ -529,7 +525,7 @@ function Initialize-Operations {
 
                 # Check if target state reached
                 if ($currentState -eq $targetState -or $currentState -eq "ONLINE" -or $onlineState -eq "ONLINE" -or $currentState -eq "RUNNING") {
-                    Write-Host "[✓] Cluster initialization complete! Final state: $currentState" -ForegroundColor Green
+                    Write-Host "`n[✓] Cluster initialization complete! Final state: $currentState" -ForegroundColor Green
                     return $true
                 }
 
@@ -583,7 +579,7 @@ function Set-EulaSetting {
         $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
 
         Invoke-RestMethod -Method POST `
-            -Uri "https://${operationsAppliance}/suite-api/internal/deployment/config/properties/java_util_HashSet" `
+            -Uri "https://${operationsFqdn}/suite-api/internal/deployment/config/properties/java_util_HashSet" `
             -Headers $internalHeaders `
             -Body $jsonBody `
             -ContentType "application/json" `
@@ -628,7 +624,7 @@ function Set-CeipSetting {
         $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
 
         Invoke-RestMethod -Method POST `
-            -Uri "https://${operationsAppliance}/suite-api/internal/deployment/config/properties/java_util_HashSet" `
+            -Uri "https://${operationsFqdn}/suite-api/internal/deployment/config/properties/java_util_HashSet" `
             -Headers $internalHeaders `
             -Body $jsonPropBody `
             -ContentType "application/json" `
@@ -637,7 +633,7 @@ function Set-CeipSetting {
 
         # 2. Configure global telemetry status (Enabled/Disabled)
         $telemetrySetting = Invoke-RestMethod -Method GET `
-            -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED" `
+            -Uri "https://${operationsFqdn}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED" `
             -Headers $operationsHeaders `
             -SkipCertificateCheck `
             -ErrorAction SilentlyContinue
@@ -646,7 +642,7 @@ function Set-CeipSetting {
             # Endpoint variation 1: PUT URL path setting
             try {
                 Invoke-RestMethod -Method PUT `
-                    -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED/${setting}" `
+                    -Uri "https://${operationsFqdn}/suite-api/api/deployment/config/globalsettings/TELEMETRY_ENABLED/${setting}" `
                     -Headers $operationsHeaders `
                     -SkipCertificateCheck `
                     -ErrorAction SilentlyContinue | Out-Null
@@ -659,7 +655,7 @@ function Set-CeipSetting {
                     } | ConvertTo-Json -Depth 5
 
                     Invoke-RestMethod -Method PUT `
-                        -Uri "https://${operationsAppliance}/suite-api/api/deployment/config/globalsettings" `
+                        -Uri "https://${operationsFqdn}/suite-api/api/deployment/config/globalsettings" `
                         -Headers $operationsHeaders `
                         -Body $telemetryBody `
                         -ContentType "application/json" `
@@ -676,858 +672,328 @@ function Set-CeipSetting {
     }
 }
 
-Function Add-OperationsVcenterAdapter {
-    <#
-        .SYNOPSIS
-        Add an adapter.
-
-        .DESCRIPTION
-        The Add-OperationsAdapter cmdlet adds an adapter to VCF Operations
-
-        .EXAMPLE
-        Add-OperationsAdapter -json .\addAdapter.json
-        This example adds an adapter using the json specification file.
-
-        .PARAMETER json
-        The JSON file to use for the add.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("json")) {
-            if (!(Test-Path $json)) {
-                Throw "JSON File Not Found"
-            } else {
-                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
-            }
-        }
-
-        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
-            $operationsHeaders.Add("Content-Type", "application/json")
-        }
-
-        # Suite API endpoints: Try integrations endpoint first, fallback to adapters endpoint if 422 occurs
-        try {
-            $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters"
-            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-            return $response
-        } catch {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters"
-            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-            return $response
-        }
-    } Catch {
-        $errDetails = $_.Exception.Message
-        if ($_.Exception.Response) {
-            try {
-                $stream = $_.Exception.Response.GetResponseStream()
-                $reader = New-Object System.IO.StreamReader($stream)
-                $respBody = $reader.ReadToEnd()
-                if ($respBody) { $errDetails = $respBody }
-            } catch {}
-        }
-        Write-Error "Failed to add Operations vCenter adapter: $errDetails"
-    }
-}
-
-Function Test-OperationsVcenterAdapterConnection {
-    <#
-        .SYNOPSIS
-        Test adapter connection.
-
-        .DESCRIPTION
-        The Test-OperationsVcenterAdapterConnection cmdlet tests the connection in VCF Operations
-
-        .EXAMPLE
-        Test-OperationsVcenterAdapterConnection -json <json>
-        This example tests the connection based on the JSON file provided
-
-        .PARAMETER json
-        The JSON file to use for the test.
-    #>
-
-
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("json")) {
-            if (!(Test-Path $json)) {
-                Throw "JSON File Not Found"
-            } else {
-                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
-            }
-        }
-
-        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
-            $operationsHeaders.Add("Content-Type", "application/json")
-        }
-
-        try {
-            $uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters/testConnection"
-            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-            return $response
-        } catch {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters/testConnection"
-            $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
-            return $response
-        }
-    } Catch {
-        $errDetails = $_.Exception.Message
-        if ($_.Exception.Response) {
-            try {
-                $stream = $_.Exception.Response.GetResponseStream()
-                $reader = New-Object System.IO.StreamReader($stream)
-                $respBody = $reader.ReadToEnd()
-                if ($respBody) { $errDetails = $respBody }
-            } catch {}
-        }
-        Write-Error "Failed to test Operations vCenter adapter connection: $errDetails"
-    }
-}
-
-Function Get-OperationsAdapter {
-    <#
-        .SYNOPSIS
-        Get list of adapters.
-
-        .DESCRIPTION
-        The Get-OperationsAdapter cmdlet gets a list of adapters in VCF Operations
-
-        .EXAMPLE
-        Get-OperationsAdapter
-        This example gets a list of all adapters
-
-        .EXAMPLE
-        Get-OperationsAdapter -id <id>
-        This example gets details of an adapter by its ID.
-
-        .PARAMETER id
-        The ID of the adapter to get details for.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$id
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("id")) {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters/$id"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response
-        } else {
-            $uri = "https://$operationsAppliance/suite-api/api/adapters"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response.adapterInstancesInfoDto
-        }
-    } Catch {
-        Write-Warning "[!] Get-OperationsAdapter warning: $($_.Exception.Message)"
-    }
-}
-
-Function Get-OperationsCredential {
-    <#
-        .SYNOPSIS
-        Get credentials.
-
-        .DESCRIPTION
-        The Get-OperationsCredential cmdlet gets credentials from VCF Operations
-
-        .EXAMPLE
-        Get-OperationsCredential
-        This example gets all credentials from VCF Operations.
-
-        .PARAMETER credentialId
-        The ID of the credential to get.
-
-        .PARAMETER adapter
-        The adapter to get credentials for.
-
-        .PARAMETER resource
-        The resource to get credentials for.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$credentialId,
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [Switch]$adapter,
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [Switch]$resource
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("credentialId") -and (-not $PsBoundParameters.ContainsKey("adapter") -and (-not $PsBoundParameters.ContainsKey("resource")))) {
-            $uri = "https://$operationsAppliance/suite-api/api/credentials/$credentialId"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response
-        } elseif ($PsBoundParameters.ContainsKey("credentialId") -and ($PsBoundParameters.ContainsKey("adapter"))) {
-            $uri = "https://$operationsAppliance/suite-api/api/credentials/$credentialId/adapters"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response.adapterInstancesInfoDto
-        } elseif ($PsBoundParameters.ContainsKey("credentialId") -and ($PsBoundParameters.ContainsKey("resource"))) {
-            $uri = "https://$operationsAppliance/suite-api/api/credentials/$credentialId/resources"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response
-        } else {
-            $uri = "https://$operationsAppliance/suite-api/api/credentials"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response.credentialInstances
-        }
-    } Catch {
-        Write-Warning "[!] Get-OperationsCredential warning: $($_.Exception.Message)"
-    }
-}
-
-Function Add-OperationsCredential {
-    <#
-        .SYNOPSIS
-        Add a credential.
-
-        .DESCRIPTION
-        The Add-OperationsCredential cmdlet adds a credential to VCF Operations
-
-        .EXAMPLE
-        Add-OperationsCredential -json .\credentialJson
-        This example adds a new credential.
-
-        .PARAMETER json
-        The JSON file containing the credential details.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("json")) {
-            if (!(Test-Path $json)) {
-                Throw "JSON File Not Found"
-            } else {
-                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
-            }
-        }
-        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
-            $operationsHeaders.Add("Content-Type", "application/json")
-        }
-        $uri = "https://$operationsAppliance/suite-api/api/credentials"
-        $response = Invoke-RestMethod -Method 'POST' -Uri $Uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
-        $response
-    } Catch {
-        Write-Warning "[!] Add-OperationsCredential warning: $($_.Exception.Message)"
-    }
-}
-
-Function Get-OperationsCollectorGroup {
-    <#
-        .SYNOPSIS
-        Get list of collector groups.
-
-        .DESCRIPTION
-        The Get-OperationsCollectorGroup cmdlet gets a list of collector groups in VCF Operations
-
-        .EXAMPLE
-        Get-OperationsCollectorGroup
-        This example gets a list of collector groups
-
-        .EXAMPLE
-        Get-OperationsCollectorGroup -id <id>
-        This example gets details of a collector by its ID.
-
-        .PARAMETER id
-        The ID of the collector group to get details for.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$id
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("id")) {
-            $uri = "https://$operationsAppliance/suite-api/api/collectorgroups/$id"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response
-        } else {
-            $uri = "https://$operationsAppliance/suite-api/api/collectorgroups"
-            $response = Invoke-RestMethod -Method 'GET' -Uri $Uri -Headers $operationsHeaders -SkipCertificateCheck
-            $response.collectorGroups
-        }
-    } Catch {
-        Write-Warning "[!] Get-OperationsCollectorGroup warning: $($_.Exception.Message)"
-    }
-}
-
-Function Test-OperationsAdapterConnection {
-    <#
-        .SYNOPSIS
-        Test adapter connection.
-
-        .DESCRIPTION
-        The Test-OperationsAdapterConnection cmdlet tests the connection in VCF Operations
-
-        .EXAMPLE
-        Test-OperationsAdapterConnection -json <json>
-        This example tests the connection based on the JSON file provided
-
-        .PARAMETER json
-        The JSON file to use for the test.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("json")) {
-            if (!(Test-Path $json)) {
-                Throw "JSON File Not Found"
-            } else {
-                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
-            }
-        }
-        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
-            $operationsHeaders.Add("Content-Type", "application/json")
-        }
-        $uri = "https://$operationsAppliance/suite-api/api/adapters/testConnection"
-        $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Headers $operationsHeaders -Body $body -SkipCertificateCheck
-        $response
-    } Catch {
-        Write-Warning "[!] Test-OperationsAdapterConnection warning: $($_.Exception.Message)"
-    }
-}
-
-Function Set-OperationsAdapter {
-    <#
-        .SYNOPSIS
-        Update an adapter.
-
-        .DESCRIPTION
-        The Set-OperationsAdapter cmdlet updates the adapters configuration in VCF Operations
-
-        .EXAMPLE
-        Set-OperationsAdapter -json .\adapterJson -adapterId <id>
-        This example updates the details of an adapter.
-
-        .PARAMETER json
-        The JSON file to use for the update.
-
-        .PARAMETER adapterId
-        Optional ID of the adapter to update in the URI path.
-    #>
-
-    Param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$json,
-        [Parameter (Mandatory = $false)] [String]$adapterId
-    )
-
-    Try {
-        if ($PsBoundParameters.ContainsKey("json")) {
-            if (!(Test-Path $json)) {
-                Throw "JSON File Not Found"
-            } else {
-                $body = Get-Content -Path $json -Raw # Read the json file contents as a raw string
-            }
-        }
-
-        # Try to extract adapterId from json if not explicitly passed and strip read-only fields
-        $parsed = $null
-        try {
-            $parsed = $body | ConvertFrom-Json
-            if ([string]::IsNullOrWhiteSpace($adapterId)) {
-                if ($parsed.id) { $adapterId = $parsed.id }
-                elseif ($parsed.adapterInstancesInfoDto.id) { $adapterId = $parsed.adapterInstancesInfoDto.id }
-                elseif ($parsed.adapterInstancesInfoDto -is [array] -and $parsed.adapterInstancesInfoDto[0].id) { $adapterId = $parsed.adapterInstancesInfoDto[0].id }
-                elseif ($parsed.adapterInstanceInfoDto.id) { $adapterId = $parsed.adapterInstanceInfoDto.id }
-                elseif ($parsed.adapterInstance.id) { $adapterId = $parsed.adapterInstance.id }
-            }
-
-            # Helper to strip read-only properties from object before PUT/POST
-            $stripReadOnly = {
-                param($item)
-                if ($item -is [PSCustomObject]) {
-                    $item.PSObject.Properties.Remove('certificateInformation')
-                    $item.PSObject.Properties.Remove('links')
-                }
-            }
-
-            if ($parsed) {
-                &$stripReadOnly $parsed
-                if ($parsed.adapterInstancesInfoDto) {
-                    if ($parsed.adapterInstancesInfoDto -is [array]) {
-                        foreach ($elem in $parsed.adapterInstancesInfoDto) { &$stripReadOnly $elem }
-                    } else {
-                        &$stripReadOnly $parsed.adapterInstancesInfoDto
-                    }
-                }
-                if ($parsed.adapterInstanceInfoDto) {
-                    if ($parsed.adapterInstanceInfoDto -is [array]) {
-                        foreach ($elem in $parsed.adapterInstanceInfoDto) { &$stripReadOnly $elem }
-                    } else {
-                        &$stripReadOnly $parsed.adapterInstanceInfoDto
-                    }
-                }
-            }
-        } catch {}
-
-        if (-not $operationsHeaders.ContainsKey("Content-Type")) {
-            $operationsHeaders.Add("Content-Type", "application/json")
-        }
-
-        # List of candidate payload variations (plural adapterInstancesInfoDto first as expected by vROps API)
-        $bodiesToTry = @()
-        if ($parsed) {
-            if ($parsed.adapterInstancesInfoDto) {
-                $bodiesToTry += ($parsed | ConvertTo-Json -Depth 10)
-            } elseif ($parsed.adapterInstanceInfoDto) {
-                $unwrapped = $parsed.adapterInstanceInfoDto
-                $bodiesToTry += (@{ adapterInstancesInfoDto = @($unwrapped) } | ConvertTo-Json -Depth 10)
-                $bodiesToTry += ($parsed | ConvertTo-Json -Depth 10)
-            } else {
-                $bodiesToTry += (@{ adapterInstancesInfoDto = @($parsed) } | ConvertTo-Json -Depth 10)
-                $bodiesToTry += (@{ adapterInstancesInfoDto = $parsed } | ConvertTo-Json -Depth 10)
-                $bodiesToTry += (@{ "adapter-instances-info" = @($parsed) } | ConvertTo-Json -Depth 10)
-            }
-            if ($parsed.adapterInstance) {
-                $bodiesToTry += ($parsed.adapterInstance | ConvertTo-Json -Depth 10)
-            }
-        }
-        $bodiesToTry += $body
-
-        $attempts = @()
-
-        # List of candidate endpoints for updating an adapter
-        $endpoints = @(
-            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters" },
-            @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" },
-            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/adapters" },
-            @{ Method = 'POST';  Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters" }
-        )
-        if (-not [string]::IsNullOrWhiteSpace($adapterId)) {
-            $endpoints += @(
-                @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId" },
-                @{ Method = 'PUT';   Uri = "https://$operationsAppliance/suite-api/api/integrations/vcenters/$adapterId" },
-                @{ Method = 'PATCH'; Uri = "https://$operationsAppliance/suite-api/api/adapters/$adapterId" }
-            )
-        }
-
-        foreach ($payloadBody in $bodiesToTry) {
-            foreach ($ep in $endpoints) {
-                try {
-                    $response = Invoke-RestMethod -Method $ep.Method -Uri $ep.Uri -Headers $operationsHeaders -Body $payloadBody -SkipCertificateCheck -ErrorAction Stop
-                    return $response
-                } catch {
-                    $err = $_.Exception.Message
-                    if ($_.Exception.Response) {
-                        try {
-                            $s = $_.Exception.Response.GetResponseStream()
-                            $r = New-Object System.IO.StreamReader($s)
-                            $b = $r.ReadToEnd()
-                            if ($b) { $err = $b }
-                        } catch {}
-                    }
-                    $attempts += "$($ep.Method) $($ep.Uri) => $err"
-                }
-            }
-        }
-
-        Write-Verbose "[!] Set-OperationsAdapter candidate endpoint attempts:`n$($attempts -join "`n")"
-    } Catch {
-        Write-Verbose "[!] Set-OperationsAdapter warning: $($_.Exception.Message)"
-    }
-}
-
-Function Start-OperationsAdapterCollection {
-    <#
-        .SYNOPSIS
-        Starts collection / enables monitoring for adapter instance(s) via the VCF Operations Suite API.
-
-        .DESCRIPTION
-        Attempts standard VCF Operations REST API endpoints to transition adapter instance monitoring 
-        state to ON/STARTED using OpsToken authorization ($Global:operationsHeaders).
-
-        .EXAMPLE
-        Start-OperationsAdapterCollection -adapterInstanceIds "7ef2cb90-864a-43fc-aec9-40bf40f89c66"
-
-        .EXAMPLE
-        Start-OperationsAdapterCollection -adapterInstanceIds @("guid-1", "guid-2")
-
-        .EXAMPLE
-        "7ef2cb90-864a-43fc-aec9-40bf40f89c66" | Start-OperationsAdapterCollection
-
-        .PARAMETER adapterInstanceIds
-        One or more adapter instance GUIDs to start collection for. Accepts single string, array, or pipeline input.
-    #>
+function Request-OperationsToken {
     [CmdletBinding()]
-    Param (
-        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
-        [ValidateNotNullOrEmpty()]
-        [String[]]$adapterInstanceIds
-    )
-
-    Process {
-        # Format array of IDs for collection body endpoints
-        $idArray = @($adapterInstanceIds)
-
-        foreach ($id in $idArray) {
-            Try {
-                Write-Host "[+] Starting collection and enabling management activation for adapter instance: $id" -ForegroundColor Cyan
-
-                # Ensure Content-Type header is set
-                if (-not $Global:operationsHeaders.ContainsKey("Content-Type")) {
-                    $Global:operationsHeaders.Add("Content-Type", "application/json")
-                }
-
-                # Helper to safely extract adapter DTO object from API response
-                $extractDto = {
-                    param($obj)
-                    if (-not $obj) { return $null }
-                    if ($obj.adapterInstancesInfoDto) {
-                        if ($obj.adapterInstancesInfoDto -is [array]) { return $obj.adapterInstancesInfoDto[0] }
-                        return $obj.adapterInstancesInfoDto
-                    }
-                    if ($obj.adapterInstanceInfoDto) {
-                        if ($obj.adapterInstanceInfoDto -is [array]) { return $obj.adapterInstanceInfoDto[0] }
-                        return $obj.adapterInstanceInfoDto
-                    }
-                    if ($obj.adapterInstanceHeaderDto) {
-                        return $obj.adapterInstanceHeaderDto
-                    }
-                    return $obj
-                }
-
-                # 1. Check if adapter monitoring state is already active
-                try {
-                    $existing = Get-OperationsAdapter -id $id
-                    $dto = &$extractDto $existing
-                    if ($dto) {
-                        $currentState = $dto.monitoringState
-                        $mgmtState = $dto.managementState
-                        if (($currentState -eq "ON" -or $currentState -eq "STARTED" -or $currentState -eq "COLLECTING") -and ($mgmtState -eq "ON" -or $mgmtState -eq "ACTIVE")) {
-                            Write-Host "[✓] Adapter collection is active (monitoringState: $currentState, managementState: $mgmtState) for ID: $id" -ForegroundColor Green
-                            continue
-                        }
-                    }
-                } catch {}
-
-                $started = $false
-                $attempts = @()
-
-                # Build internal headers for internal Suite API endpoints
-                $internalHeaders = @{}
-                foreach ($k in $Global:operationsHeaders.Keys) { $internalHeaders[$k] = $Global:operationsHeaders[$k] }
-                $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
-                $internalHeaders["X-Ops-API-use-unsupported"] = "true"
-
-                # Candidate REST endpoints & payloads for starting adapter / resource monitoring state and management activation
-                $endpoints = @(
-                    # 1. Integration Activation & Management State Endpoints
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/activate"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/activate"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/enable"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/enable"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/start"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/integrations/vcenters/${id}/collect"; Headers = $Global:operationsHeaders; Body = $null },
-
-                    # 2. Official vROps Adapter Monitoring State Endpoints with Query Parameters
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON?adapterInstanceId=${id}"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON?adapterInstanceId=${id}"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON?id=${id}"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/${id}/monitoringstate?state=ON"; Headers = $Global:operationsHeaders; Body = $null },
-
-                    # 3. Official vROps Adapter Monitoring State Endpoints with JSON Body
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@{ adapterInstanceIds = @($id) } | ConvertTo-Json) },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@{ adapterInstanceIds = @($id) } | ConvertTo-Json) },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
-
-                    # 4. Standard Suite API Adapters Endpoint (Plural JAXB DTO)
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Headers = $Global:operationsHeaders; Body = (@{ "adapterInstancesInfoDto" = @( @{ id = $id; monitoringState = "ON"; managementState = "ON" } ) } | ConvertTo-Json -Depth 5) },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate"; Headers = $Global:operationsHeaders; Body = (@{ "adapter-monitoring-state" = @( @{ adapterInstanceId = $id; monitoringState = "ON" } ) } | ConvertTo-Json -Depth 5) },
-
-                    # 5. Standard Suite API Resources Endpoint (Resource monitoring state ON)
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate/ON?resourceId=${id}"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = (@($id) | ConvertTo-Json) },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/${id}/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/api/resources/${id}/monitoringstate/ON"; Headers = $Global:operationsHeaders; Body = $null },
-
-                    # 6. Internal Suite API Management Activation & Monitoring Endpoints
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/internal/integrations/vcenters/${id}/activate"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/integrations/vcenters/${id}/activate"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/internal/integrations/vcenters/${id}/management-activation"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/integrations/vcenters/${id}/management-activation"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/activate"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/activate"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'PUT';  Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/monitoringstate/ON"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/monitoringstate/ON"; Headers = $internalHeaders; Body = $null },
-                    @{ Method = 'POST'; Uri = "https://${Global:operationsAppliance}/suite-api/internal/adapters/${id}/start"; Headers = $internalHeaders; Body = $null }
-                )
-
-                foreach ($ep in $endpoints) {
-                    try {
-                        $params = @{
-                            Method               = $ep.Method
-                            Uri                  = $ep.Uri
-                            Headers              = if ($ep.Headers) { $ep.Headers } else { $Global:operationsHeaders }
-                            SkipCertificateCheck = $true
-                            ErrorAction          = 'Stop'
-                        }
-                        if ($ep.Body) {
-                            $params['Body'] = $ep.Body
-                        }
-
-                        Invoke-RestMethod @params | Out-Null
-                        $started = $true
-                        break
-                    } catch {
-                        $err = $_.Exception.Message
-                        if ($_.Exception.Response) {
-                            try {
-                                $stream = $_.Exception.Response.GetResponseStream()
-                                $reader = New-Object System.IO.StreamReader($stream)
-                                $respBody = $reader.ReadToEnd()
-                                if ($respBody) { $err = $respBody }
-                            } catch {}
-                        }
-                        $attempts += "$($ep.Method) $($ep.Uri) => $err"
-                    }
-                }
-
-                # XML Payload Fallback for PUT /suite-api/api/adapters/monitoringstate
-                if (-not $started) {
-                    try {
-                        $xmlHeaders = @{}
-                        foreach ($k in $Global:operationsHeaders.Keys) { $xmlHeaders[$k] = $Global:operationsHeaders[$k] }
-                        $xmlHeaders["Content-Type"] = "application/xml"
-                        $xmlBody = "<adapter-monitoring-state xmlns=""http://vrops.vmware.com/suite-api/raw""><adapter-monitoring-state adapterInstanceId=""$id"" monitoringState=""ON""/></adapter-monitoring-state>"
-                        Invoke-RestMethod -Method 'PUT' -Uri "https://${Global:operationsAppliance}/suite-api/api/adapters/monitoringstate" -Headers $xmlHeaders -Body $xmlBody -SkipCertificateCheck -ErrorAction Stop | Out-Null
-                        $started = $true
-                    } catch {}
-                }
-
-                # Direct Adapter Object Update Fallback: Force monitoringState = "ON" and managementState = "ON" via Set-OperationsAdapter
-                if (-not $started) {
-                    try {
-                        $adapterObj = Get-OperationsAdapter -id $id
-                        $dtoToUpdate = &$extractDto $adapterObj
-                        if ($dtoToUpdate) {
-                            if ($dtoToUpdate -is [PSCustomObject]) {
-                                $dtoToUpdate.PSObject.Properties.Remove('certificateInformation')
-                                $dtoToUpdate.PSObject.Properties.Remove('links')
-                                if ($dtoToUpdate.PSObject.Properties['monitoringState']) { $dtoToUpdate.monitoringState = "ON" }
-                                else { $dtoToUpdate | Add-Member -MemberType NoteProperty -Name "monitoringState" -Value "ON" -Force }
-                                if ($dtoToUpdate.PSObject.Properties['managementState']) { $dtoToUpdate.managementState = "ON" }
-                                else { $dtoToUpdate | Add-Member -MemberType NoteProperty -Name "managementState" -Value "ON" -Force }
-                            } elseif ($dtoToUpdate -is [System.Collections.IDictionary]) {
-                                $dtoToUpdate.Remove('certificateInformation')
-                                $dtoToUpdate.Remove('links')
-                                $dtoToUpdate["monitoringState"] = "ON"
-                                $dtoToUpdate["managementState"] = "ON"
-                            }
-
-                            $updatePayload = @{ adapterInstancesInfoDto = @($dtoToUpdate) } | ConvertTo-Json -Depth 10
-                            Set-Content -Path .\startAdapterTmp.json -Value $updatePayload -Encoding UTF8
-                            Set-OperationsAdapter -json .\startAdapterTmp.json -adapterId $id | Out-Null
-                            if (Test-Path .\startAdapterTmp.json) { Remove-Item .\startAdapterTmp.json -Force -Confirm:$false }
-                            $started = $true
-                        }
-                    } catch {}
-                }
-
-                # Verify collection status
-                Start-Sleep -Seconds 2
-                try {
-                    $verifyAdapter = Get-OperationsAdapter -id $id
-                    $dtoVerify = &$extractDto $verifyAdapter
-                    if ($dtoVerify) {
-                        $finalState = $dtoVerify.monitoringState
-                        $finalMgmtState = $dtoVerify.managementState
-                        if ($finalState -eq "ON" -or $finalState -eq "STARTED" -or $finalState -eq "COLLECTING" -or $finalMgmtState -eq "ON" -or $finalMgmtState -eq "ACTIVE") {
-                            $started = $true
-                        }
-                    }
-                } catch {}
-
-                if ($started) {
-                    Write-Host "[✓] Adapter collection started and management activation enabled successfully for ID: $id" -ForegroundColor Green
-                } else {
-                    Write-Verbose "[!] Collection start endpoint attempts:`n$($attempts -join "`n")"
-                    Write-Host "[✓] Adapter collection initiated for ID: $id" -ForegroundColor Green
-                }
-
-            } Catch {
-                Write-Verbose "[!] Start-OperationsAdapterCollection warning for adapter (${id}): $($_.Exception.Message)"
-                Write-Host "[✓] Adapter collection initiated for ID: $id" -ForegroundColor Green
-            }
-        }
-    }
-}
-
-function Add-VcenterAdapter {
     param (
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$fqdn,
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$username,
-        [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$password
+        [Parameter(Mandatory = $true)] [String]$Fqdn,
+        [Parameter(Mandatory = $true)] [String]$Username,
+        [Parameter(Mandatory = $true)] [String]$Password
     )
+
+    $Global:operationsFqdn = $Fqdn
+    Write-Host "[+] Acquiring VCF Operations API token from '$operationsFqdn'..." -ForegroundColor Cyan
+    $uri = "https://$operationsFqdn/suite-api/api/auth/token/acquire"
+    $headers = @{
+        "Accept"       = "application/json"
+        "Content-Type" = "application/json"
+    }
+    $body = @{
+        "username"   = $Username
+        "authSource" = "LOCAL"
+        "password"   = $Password
+    } | ConvertTo-Json
 
     try {
-        Write-Host "[+] Adding vCenter adapter for: $($fqdn)" -ForegroundColor Cyan
-        $cleanFqdn = $fqdn -replace '^https?://', '' -replace '/.*$', ''
-        
-        # 1. Ensure Credential Exists
-        if (-Not (Get-OperationsCredential | Where-Object { $_.name -eq $cleanFqdn -or $_.name -eq $fqdn })) {
-            $credentialJson = '{
-                "name": "'+ $cleanFqdn + '",
-                "adapterKindKey": "VMWARE",
-                "credentialKindKey": "PRINCIPALCREDENTIAL",
-                "fields": [
-                    { "name": "USER", "value": "'+ $username + '" },
-                    { "name": "PASSWORD", "value": "'+ $password + '" }
-            ]}'
-            Set-Content -Path .\addCredential.json -Value $credentialJson -Encoding UTF8
-            Add-OperationsCredential -json .\addCredential.json | Out-Null
-            if (Test-Path .\addCredential.json) { Remove-Item .\addCredential.json -Force -Confirm:$false }
-        }
-
-        # Retrieve Collector Group UUID (.id property)
-        $collector = Get-OperationsCollectorGroup | Select-Object -First 1
-        $collectorIdVal = if ($collector -and $collector.id) { $collector.id } elseif ($collector -and $collector.collectorGroupId) { $collector.collectorGroupId } else { $null }
-
-        $credObj = Get-OperationsCredential | Where-Object { $_.name -eq $cleanFqdn -or $_.name -eq $fqdn } | Select-Object -First 1
-        if (-not $credObj) {
-            throw "Could not find credential for $cleanFqdn in VCF Operations"
-        }
-
-        # 2. Check if adapter already exists
-        $existingAdapters = Get-OperationsAdapter
-        $finalAdapter = $existingAdapters | Where-Object { $_.resourceKey.name -eq $cleanFqdn -or $_.name -eq $cleanFqdn -or $_.resourceKey.name -eq $fqdn -or $_.name -eq $fqdn } | Select-Object -First 1
-
-        if (-not $finalAdapter) {
-            # Build adapter creation payload
-            $adapterData = [ordered]@{
-                "name"               = $cleanFqdn
-                "description"        = "vCenter Adapter - $cleanFqdn"
-                "adapterKindKey"     = "VMWARE"
-                "resourceKindKey"    = "VMwareAdapter Instance"
-                "monitoringInterval" = 5
-                "monitoringState"    = "ON"
-                "managementState"    = "ON"
-                "resourceIdentifiers"= @(
-                    @{ "name" = "AUTODISCOVERY"; "value" = "true" },
-                    @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" },
-                    @{ "name" = "VCURL"; "value" = "https://$cleanFqdn/sdk" }
-                )
-                "credential"         = @{
-                    "id" = $credObj.id
-                }
-            }
-
-            if ($collectorIdVal) {
-                $adapterData["collectorId"] = $collectorIdVal
-            }
-
-            $adapterJson = $adapterData | ConvertTo-Json -Depth 5
-            Set-Content -Path .\addAdapter.json -Value $adapterJson -Encoding UTF8
-
-            Add-OperationsVcenterAdapter -json .\addAdapter.json | Out-Null
-            
-            # Re-fetch the newly created adapter to obtain its assigned ID
-            $finalAdapter = Get-OperationsAdapter | Where-Object { $_.resourceKey.name -eq $cleanFqdn -or $_.name -eq $cleanFqdn -or $_.resourceKey.name -eq $fqdn -or $_.name -eq $fqdn } | Select-Object -First 1
-            if (Test-Path .\addAdapter.json) { Remove-Item .\addAdapter.json -Force -Confirm:$false }
+        if ($PSEdition -eq 'Core') {
+            $response = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -Body $body -SkipCertificateCheck -ErrorAction Stop
         } else {
-            Write-Host "[!] vCenter adapter already exists in VCF Operations ($cleanFqdn)" -ForegroundColor Yellow
+            $response = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -Body $body -ErrorAction Stop
         }
 
-        if ($finalAdapter) {
-            Write-Host "[+] Testing connection and trusting vCenter SSL certificate..." -ForegroundColor Cyan
-            
-            # Prepare payload for test connection
-            $testAdapterData = [ordered]@{
-                "id"                 = $finalAdapter.id
-                "name"               = $cleanFqdn
-                "adapterKindKey"     = "VMWARE"
-                "resourceKindKey"    = "VMwareAdapter Instance"
-                "monitoringInterval" = 5
-                "resourceIdentifiers"= @(
-                    @{ "name" = "AUTODISCOVERY"; "value" = "true" },
-                    @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" },
-                    @{ "name" = "VCURL"; "value" = "https://$cleanFqdn/sdk" }
-                )
-                "credential"         = @{
-                    "id" = $credObj.id
-                }
+        if ($response.token) {
+            Write-Host "[✓] Successfully acquired VCF Operations API token from '$operationsFqdn'" -ForegroundColor Green
+            $Global:operationsToken = $response.token
+            $Global:operationsHeaders = @{
+                "Accept"        = "application/json"
+                "Content-Type"  = "application/json"
+                "Authorization" = "OpsToken $operationsToken"
             }
-            if ($collectorIdVal) { $testAdapterData["collectorId"] = $collectorIdVal }
-
-            $testAdapterJson = $testAdapterData | ConvertTo-Json -Depth 5
-            Set-Content -Path .\testAdapter.json -Value $testAdapterJson -Encoding UTF8
-
-            $testResult = Test-OperationsVcenterAdapterConnection -json .\testAdapter.json
-            if (Test-Path .\testAdapter.json) { Remove-Item .\testAdapter.json -Force -Confirm:$false }
-
-            if ($testResult) {
-                # Extract certificateInformation from testResult if present
-                $certInfo = $null
-                if ($testResult.certificateInformation) {
-                    $certInfo = $testResult.certificateInformation
-                } elseif ($testResult.adapterInstance -and $testResult.adapterInstance.certificateInformation) {
-                    $certInfo = $testResult.adapterInstance.certificateInformation
-                } elseif ($testResult.certificate) {
-                    $certInfo = $testResult.certificate
-                }
-
-                # If certificate information was returned, submit second test connection call to accept & trust the certificate
-                if ($certInfo) {
-                    $testAdapterData["certificateInformation"] = $certInfo
-                    $testAdapterJsonWithCert = $testAdapterData | ConvertTo-Json -Depth 10
-                    Set-Content -Path .\testAdapterWithCert.json -Value $testAdapterJsonWithCert -Encoding UTF8
-                    Write-Host "[+] Submitting vCenter certificate trust payload to connection test..." -ForegroundColor Cyan
-                    $certTestResult = Test-OperationsVcenterAdapterConnection -json .\testAdapterWithCert.json
-                    if (Test-Path .\testAdapterWithCert.json) { Remove-Item .\testAdapterWithCert.json -Force -Confirm:$false }
-                }
-
-                # Construct a clean, schema-valid adapter instance object for Set-OperationsAdapter
-                $adapterToUpdate = [ordered]@{
-                    "id"                 = $finalAdapter.id
-                    "name"               = $cleanFqdn
-                    "description"        = "vCenter Adapter - $cleanFqdn"
-                    "adapterKindKey"     = "VMWARE"
-                    "resourceKindKey"    = "VMwareAdapter Instance"
-                    "monitoringInterval" = 5
-                    "monitoringState"    = "ON"
-                    "managementState"    = "ON"
-                    "resourceIdentifiers"= @(
-                        @{ "name" = "AUTODISCOVERY"; "value" = "true" },
-                        @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" },
-                        @{ "name" = "VCURL"; "value" = "https://$cleanFqdn/sdk" }
-                    )
-                    "credential"         = @{
-                        "id" = $credObj.id
-                    }
-                }
-                if ($collectorIdVal) { $adapterToUpdate["collectorId"] = $collectorIdVal }
-
-                # Save the clean adapter instance object and update the adapter configuration
-                $createdJson = $adapterToUpdate | ConvertTo-Json -Depth 10
-                Set-Content -Path .\createdAdapter.json -Value $createdJson -Encoding UTF8
-                
-                Write-Host "[+] Updating adapter configuration and enabling collection..." -ForegroundColor Cyan
-                Set-OperationsAdapter -json .\createdAdapter.json -adapterId $finalAdapter.id | Out-Null
-                
-                if (Test-Path .\createdAdapter.json) { Remove-Item .\createdAdapter.json -Force -Confirm:$false }
-            }
-
-            Start-Sleep -Seconds 5
-            Start-OperationsAdapterCollection -adapterInstanceIds $finalAdapter.id
-            Write-Host "[✓] Added and registered vCenter adapter in VCF Operations successfully" -ForegroundColor Green
+            #return $response.token | Out-Null
         } else {
-            Write-Host "[x] Adding vCenter adapter to VCF Operations failed" -ForegroundColor Red
+            throw "Token empty in response"
         }
-    } catch {
-        Write-Error "Add-VcenterAdapter error: $_"
     }
+    catch {
+        Write-Error "Failed to acquire VCF Operations API token from '${operationsFqdn}': $_"
+        throw
+    }
+}
+
+function Get-OperationsCredential {
+    Write-Host "[+] Querying credentials in VCF Operations..." -ForegroundColor Cyan
+
+    try {
+        if ($PSEdition -eq 'Core') {
+            $response = Invoke-RestMethod -Method GET -Uri "https://${operationsFqdn}/suite-api/api/credentials" -Headers $operationsHeaders -SkipCertificateCheck -ErrorAction Stop
+        } else {
+            $response = Invoke-RestMethod -Method GET -Uri "https://${operationsFqdn}/suite-api/api/credentials" -Headers $operationsHeaders -ErrorAction Stop
+        }
+        return $response.credentialInstances
+    }
+    catch {
+        Write-Warning "[!] Get-OperationsCredential warning: $_"
+        return @()
+    }
+}
+
+function Add-OperationsCredential {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)] [String]$CredentialName,
+        [Parameter(Mandatory = $true)] [String]$User,
+        [Parameter(Mandatory = $true)] [String]$Pass
+    )
+
+    Write-Host "[+] Creating credential '$CredentialName' in VCF Operations..." -ForegroundColor Cyan
+    $body = @{
+        "name"              = $CredentialName
+        "adapterKindKey"    = "VMWARE"
+        "credentialKindKey" = "PRINCIPALCREDENTIAL"
+        "fields"            = @(
+            @{ "name" = "USER"; "value" = $User },
+            @{ "name" = "PASSWORD"; "value" = $Pass }
+        )
+    } | ConvertTo-Json -Depth 5
+
+    try {
+        if ($PSEdition -eq 'Core') {
+            $response = Invoke-RestMethod -Method POST -Uri "https://${operationsFqdn}/suite-api/api/credentials" -Headers $operationsHeaders -Body $body -SkipCertificateCheck -ErrorAction Stop
+        } else {
+            $response = Invoke-RestMethod -Method POST -Uri "https://${operationsFqdn}/suite-api/api/credentials" -Headers $operationsHeaders -Body $body -ErrorAction Stop
+        }
+        Write-Host "[✓] Credential '$CredentialName' created successfully" -ForegroundColor Green
+        return $response
+    }
+    catch {
+        Write-Error "Failed to add credential '$CredentialName': $_"
+        throw
+    }
+}
+
+function Get-OperationsCollectorGroup {
+    Write-Host "[+] Querying collector groups in VCF Operations..." -ForegroundColor Cyan
+
+    try {
+        if ($PSEdition -eq 'Core') {
+            $response = Invoke-RestMethod -Method GET -Uri "https://${operationsFqdn}/suite-api/api/collectorgroups" -Headers $operationsHeaders -SkipCertificateCheck -ErrorAction Stop
+        } else {
+            $response = Invoke-RestMethod -Method GET -Uri "https://${operationsFqdn}/suite-api/api/collectorgroups" -Headers $operationsHeaders -ErrorAction Stop
+        }
+        return $response.collectorGroups
+    }
+    catch {
+        Write-Warning "[!] Get-OperationsCollectorGroup warning: $_"
+        return @()
+    }
+}
+
+function Invoke-OperationsRest {
+    # Single REST wrapper. Returns @{ Ok; Status; Body } and never throws, so callers can inspect
+    # 400 bodies (untrusted certificate lists) and are never silently swallowing failures.
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]  [String]$Method,
+        [Parameter(Mandatory = $true)]  [String]$Uri,
+        [Parameter(Mandatory = $true)]  [Hashtable]$Headers,
+        [Parameter(Mandatory = $false)] [Object]$Body
+    )
+
+    $params = @{ Method = $Method; Uri = $Uri; Headers = $Headers; ErrorAction = 'Stop' }
+    if ($null -ne $Body) {
+        $params.Body = if ($Body -is [String]) { $Body } else { $Body | ConvertTo-Json -Depth 10 }
+    }
+    if ($PSEdition -eq 'Core') { $params.SkipCertificateCheck = $true }
+
+    try {
+        $response = Invoke-RestMethod @params
+        return @{ Ok = $true; Status = 200; Body = $response }
+    }
+    catch {
+        $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+        $text = $_.ErrorDetails.Message
+        if (-not $text -and $_.Exception.Response -and $_.Exception.Response.GetResponseStream) {
+            try { $text = (New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd() } catch {}
+        }
+        $parsed = $null
+        if ($text) { try { $parsed = $text | ConvertFrom-Json } catch { $parsed = $text } }
+        return @{ Ok = $false; Status = $status; Body = $parsed; Message = "$($_.Exception.Message) $text" }
+    }
+}
+
+function Find-OperationsCertificate {
+    # Recursively collects certificate objects (anything carrying a thumbprint) from a response body.
+    param ([Parameter(Mandatory = $false)] [Object]$Node)
+
+    if ($null -eq $Node -or $Node -is [String]) { return }
+    if ($Node -is [System.Collections.IEnumerable]) { foreach ($n in $Node) { Find-OperationsCertificate -Node $n }; return }
+    if ($Node.PSObject.Properties['thumbprint'] -and $Node.PSObject.Properties['certificateDetails']) { $Node; return }
+    foreach ($prop in $Node.PSObject.Properties) { Find-OperationsCertificate -Node $prop.Value }
+}
+
+function Get-OperationsAdapter {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $false)] [String]$AdapterId,
+        [Parameter(Mandatory = $false)] [String]$AdapterKindKey
+    )
+
+    $uri = "https://${operationsFqdn}/suite-api/api/adapters"
+    if ($AdapterId) { $uri += "/$AdapterId" }
+    elseif ($AdapterKindKey) { $uri += "?adapterKindKey=$AdapterKindKey" }
+
+    $r = Invoke-OperationsRest -Method GET -Uri $uri -Headers $operationsHeaders
+    if (-not $r.Ok) { Write-Warning "[!] Get-OperationsAdapter failed ($($r.Status)): $($r.Message)"; return @() }
+    if ($AdapterId) { return $r.Body } else { return $r.Body.adapterInstancesInfoDto }
+}
+
+function Get-OperationsAdapterName {
+    param ([Object]$Adapter)
+    if ($Adapter.resourceKey.name) { $Adapter.resourceKey.name } else { $Adapter.name }
+}
+
+function New-OperationsVcenterIntegrationPayload {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]  [String]$VcenterFqdn,
+        [Parameter(Mandatory = $true)]  [String]$CollectorGroupId,
+        [Parameter(Mandatory = $true)]  [String]$CredentialId,
+        [Parameter(Mandatory = $false)] [Object[]]$Certificates
+    )
+
+    # Mirrors the UI saveCloudAccount call: vCenter adapter plus its vSAN child.
+    $payload = [ordered]@{
+        "name"                = $VcenterFqdn
+        "description"         = "vCenter Adapter - $VcenterFqdn"
+        "collectorGroupId"    = $CollectorGroupId
+        "credentialInstanceId" = $CredentialId
+        "resourceIdentifiers" = @(
+            @{ "name" = "VCURL"; "value" = $VcenterFqdn },
+            @{ "name" = "AUTODISCOVERY"; "value" = "true" },
+            @{ "name" = "PROCESSCHANGEEVENTS"; "value" = "true" }
+        )
+        "vsanConfig"          = @{ "enabled" = $true; "smartDataCollectionEnabled" = $false }
+    }
+    if ($Certificates) { $payload["certificates"] = @($Certificates) }
+    return $payload
+}
+
+function Start-OperationsAdapterCollection {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)] [String[]]$AdapterInstanceIds
+    )
+
+    # Creation never starts an adapter (the UI makes a separate startCloudAccountCollect call).
+    # Documented Suite API call: PUT /suite-api/api/adapters/{id}/monitoringstate/start (no body).
+    $allStarted = $true
+    foreach ($id in $AdapterInstanceIds) {
+        Write-Host "[+] Starting collection for adapter instance ID: $id..." -ForegroundColor Cyan
+        $r = Invoke-OperationsRest -Method PUT -Uri "https://${operationsFqdn}/suite-api/api/adapters/$id/monitoringstate/start" -Headers $operationsHeaders
+        if ($r.Ok) {
+            Write-Host "[✓] Start requested for adapter ID: $id" -ForegroundColor Green
+        } else {
+            $allStarted = $false
+            Write-Host "[!] Failed to start adapter ID $id (HTTP $($r.Status)): $($r.Message)" -ForegroundColor Red
+        }
+    }
+    return $allStarted
+}
+
+
+function Add-VcenterAdapter {
+<#
+    .SYNOPSIS
+    Pure REST API automation for VCF Operations Cloud Account creation and collection activation.
+
+    .DESCRIPTION
+    The Add-VcenterAdapter cmdlet uses standard VCF / Aria Operations Suite API endpoints
+    (`/suite-api/api/...`) to authenticate, manage credentials, test & trust SSL certificates,
+    register vCenter cloud accounts, and start metric collection.
+
+    .EXAMPLE
+    Add-VcenterAdapter -VcenterFqdn "sfo-w03-vc01.sfo.rainpole.io" -VcenterUser "administrator@vsphere.local" -VcenterPass "VMware1!"
+#>
+    [CmdletBinding()]
+    Param (
+        [Parameter(Mandatory = $false)] [String]$VcenterFqdn,
+        [Parameter(Mandatory = $false)] [String]$VcenterUser,
+        [Parameter(Mandatory = $false)] [String]$VcenterPass,
+        [Parameter(Mandatory = $false)] [String]$CollectorGroupId
+    )
+
+    if ($PSEdition -ne 'Core') {
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+    }
+
+    $cleanVcFqdn = $VcenterFqdn -replace '^https?://', '' -replace '/.*$', ''
+
+    Write-Host "[+] Starting VCF Operations Cloud Account Workflow..." -ForegroundColor Cyan
+
+    # 1. Get or Create Credential
+    $existingCreds = Get-OperationsCredential
+    $credObj = $existingCreds | Where-Object { $_.name -eq $cleanVcFqdn -or $_.name -eq $VcenterFqdn } | Select-Object -First 1
+
+    if (-not $credObj) {
+        $credObj = Add-OperationsCredential -CredentialName $cleanVcFqdn -User $VcenterUser -Pass $VcenterPass
+    } else {
+        Write-Host "[!] Found existing credential for '$cleanVcFqdn' (ID: $($credObj.id))" -ForegroundColor Yellow
+    }
+    $credentialId = if ($credObj.id) { $credObj.id } else { $credObj.credentialInstances[0].id }
+
+    # 2. Resolve Collector Group
+    if ([String]::IsNullOrWhiteSpace($CollectorGroupId)) {
+        $collectors = Get-OperationsCollectorGroup
+        if ($collectors -and $collectors.Count -gt 0) {
+            $CollectorGroupId = if ($collectors[0].id) { $collectors[0].id } else { $collectors[0].collectorGroupId }
+        }
+    }
+    Write-Host "[✓] Using Collector Group ID: $CollectorGroupId" -ForegroundColor Green
+
+    # 3. Check if Adapter Exists or Create It
+    Write-Host "[+] Checking if the Adapter already exists..." -ForegroundColor Cyan
+    $matchesVc = { (Get-OperationsAdapterName $_) -in @($cleanVcFqdn, $VcenterFqdn) }
+    $adapterObj = Get-OperationsAdapter -AdapterKindKey "VMWARE" | Where-Object $matchesVc | Select-Object -First 1
+
+    if (-not $adapterObj) {
+        # 4a. Test connection first; vCenter's untrusted certificate is returned for acceptance
+        $payload = New-OperationsVcenterIntegrationPayload -VcenterFqdn $cleanVcFqdn -CollectorGroupId $CollectorGroupId -CredentialId $credentialId
+        $base = "https://${operationsFqdn}/suite-api/api/integrations/vcenters"
+
+        Write-Host "[+] Testing vCenter connection and certificate..." -ForegroundColor Cyan
+        $test = Invoke-OperationsRest -Method POST -Uri "$base/testConnection" -Headers $operationsHeaders -Body $payload
+        $certs = @(Find-OperationsCertificate -Node $test.Body)
+        if (-not $test.Ok -and $certs.Count -eq 0) {
+            throw "vCenter testConnection failed (HTTP $($test.Status)): $($test.Message)"
+        }
+
+        # 4b. Create the integration, trusting the presented certificate(s) in the same call (as the UI does)
+        if ($certs.Count -gt 0) {
+            Write-Host "[+] Trusting $($certs.Count) vCenter SSL certificate(s)..." -ForegroundColor Cyan
+            $payload = New-OperationsVcenterIntegrationPayload -VcenterFqdn $cleanVcFqdn -CollectorGroupId $CollectorGroupId -CredentialId $credentialId -Certificates $certs
+        }
+        Write-Host "[+] Registering vCenter adapter in VCF Operations..." -ForegroundColor Cyan
+        $create = Invoke-OperationsRest -Method POST -Uri $base -Headers $operationsHeaders -Body $payload
+        if (-not $create.Ok) { throw "Failed to create vCenter integration (HTTP $($create.Status)): $($create.Message)" }
+
+        $adapterObj = Get-OperationsAdapter -AdapterKindKey "VMWARE" | Where-Object $matchesVc | Select-Object -First 1
+        if (-not $adapterObj) { throw "vCenter integration was created but the adapter instance could not be found." }
+    } else {
+        Write-Host "[!] Found existing vCenter adapter for '$cleanVcFqdn' (ID: $($adapterObj.id))" -ForegroundColor Yellow
+    }
+
+    $adapterId = $adapterObj.id
+
+    # 4. Collect the adapter IDs to start: the vCenter adapter plus its vSAN child (UI uses withChildren=true)
+    $adapterIdsToStart = @($adapterId)
+    $vsanAdapter = Get-OperationsAdapter -AdapterKindKey "VirtualAndPhysicalSANAdapter" |
+        Where-Object { (Get-OperationsAdapterName $_) -like "$cleanVcFqdn*" } | Select-Object -First 1
+    if ($vsanAdapter) { $adapterIdsToStart += $vsanAdapter.id }
+
+    # 5. Enable Metric Collection (creation leaves the adapters Stopped / Not Collecting)
+    $started = Start-OperationsAdapterCollection -AdapterInstanceIds $adapterIdsToStart
+    if (-not $started) { throw "One or more adapters could not be started; see errors above." }
+
+    Write-Host "[✓] VCF Operations Cloud Account Workflow Completed Successfully for $cleanVcFqdn" -ForegroundColor Green
 }
 
 function Request-LicenseServerOTK {
@@ -1540,7 +1006,7 @@ function Request-LicenseServerOTK {
         $internalHeaders["X-vRealizeOps-API-use-unsupported"] = "true"
 
         $Script:licenseServerOTK = Invoke-RestMethod -Method GET `
-            -Uri "https://${operationsAppliance}/suite-api/internal/extension/vcf-license-cloud-integration/license-servers/otk" `
+            -Uri "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/license-servers/otk" `
             -Headers $internalHeaders `
             -SkipCertificateCheck
 
@@ -1554,13 +1020,165 @@ function Request-LicenseServerOTK {
     }
 }
 
+function Get-RandomApiKey {
+    <#
+    .SYNOPSIS
+        Generates a cryptographically secure API Key combining today's date and a high-entropy random byte string.
+
+    .DESCRIPTION
+        This script generates an API Key composed of:
+        1. A configurable prefix (e.g., 'API' or 'SK').
+        2. Today's date formatted according to a specified date format (default: 'yyyyMMdd').
+        3. A cryptographically secure random string backed by 96 bits (12 bytes) of system entropy using .NET's RandomNumberGenerator.
+
+        Supported encodings for entropy bytes:
+        - Hex: 24-character hexadecimal string (96 bits = 12 bytes).
+        - Base64Url: 16-character URL-safe base64 string without padding.
+        - Base32: 20-character base32 RFC 4648 string (case-insensitive, URL-safe).
+
+    .PARAMETER Prefix
+        Optional prefix for the API key (e.g., 'API', 'KEY', 'DEV', 'PROD'). Default is 'API'.
+
+    .PARAMETER DateFormat
+        Date format specifier. Default is 'yyyyMMdd' (e.g., 20261026).
+
+    .PARAMETER EntropyBits
+        Number of bits of cryptographic entropy to generate. Default is 96 bits (12 bytes).
+
+    .PARAMETER Encoding
+        Encoding format for the random bytes: 'Hex', 'Base64Url', or 'Base32'. Default is 'Hex'.
+
+    .PARAMETER Separator
+        Character used to separate the prefix, date, and random string components. Default is '-'.
+
+    .EXAMPLE
+        .\Generate-ApiKey.ps1
+
+        Output:
+        API-20261026-4F8A2B9C1E3D5F7A0B2C4E6F
+
+    .EXAMPLE
+        .\Generate-ApiKey.ps1 -Prefix "sk_live" -Encoding Base64Url -Separator "_"
+
+        Output:
+        sk_live_20261026_oW9-xR3kL2mP8vQn
+
+    .EXAMPLE
+        Import-Module .\Generate-ApiKey.ps1
+        Get-RandomApiKey -EntropyBits 128 -Encoding Hex
+    #>
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$Prefix = "API",
+
+        [Parameter(Mandatory = $false)]
+        [string]$DateFormat = "yyyyMMdd",
+
+        [Parameter(Mandatory = $false)]
+        [int]$EntropyBits = 96,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateSet("Hex", "Base64Url", "Base32")]
+        [string]$Encoding = "Hex",
+
+        [Parameter(Mandatory = $false)]
+        [string]$Separator = "-"
+    )
+
+    process {
+        # 1. Obtain cryptographically strong random entropy
+        $randomBytes = New-CryptographicBytes -BitCount $EntropyBits
+
+        # 2. Encode the random bytes
+        $entropyString = switch ($Encoding) {
+            "Hex" {
+                [System.BitConverter]::ToString($randomBytes) -replace '-'
+            }
+            "Base64Url" {
+                $base64 = [System.Convert]::ToBase64String($randomBytes)
+                $base64.TrimEnd('=').Replace('+', '-').Replace('/', '_')
+            }
+            "Base32" {
+                Convert-BytesToBase32 -Bytes $randomBytes
+            }
+        }
+
+        # 3. Generate date component
+        $dateString = (Get-Date).ToString($DateFormat)
+
+        # 4. Construct final key
+        $components = [System.Collections.Generic.List[string]]::new()
+        if (-not [string]::IsNullOrWhiteSpace($Prefix)) {
+            $components.Add($Prefix)
+        }
+        $components.Add($dateString)
+        $components.Add($entropyString)
+
+        return ($components -join $Separator)
+    }
+
+    # # If the script is executed directly (not sourced or imported), output a generated key.
+    # if ($MyInvocation.InvocationName -ne '.') {
+    #     Get-RandomApiKey -Prefix $Prefix -DateFormat $DateFormat -EntropyBits $EntropyBits -Encoding $Encoding -Separator $Separator
+    # }
+}
+
+function New-CryptographicBytes {
+    param([int]$BitCount)
+
+    # Calculate required bytes (96 bits = 12 bytes)
+    $byteCount = [math]::Ceiling($BitCount / 8.0)
+    $bytes = [byte[]]::new($byteCount)
+
+    # Use system CSPRNG (BCryptGenRandom / /dev/urandom)
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($bytes)
+    }
+    finally {
+        $rng.Dispose()
+    }
+
+    return $bytes
+}
+
+function Convert-BytesToBase32 {
+    param([byte[]]$Bytes)
+
+    $alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+    $output = [System.Text.StringBuilder]::new()
+    
+    $bitBuffer = 0
+    $bitCount = 0
+
+    foreach ($b in $Bytes) {
+        $bitBuffer = ($bitBuffer -shl 8) -bor $b
+        $bitCount += 8
+
+        while ($bitCount -ge 5) {
+            $bitCount -= 5
+            $index = ($bitBuffer -shr $bitCount) -band 0x1F
+            [void]$output.Append($alphabet[$index])
+        }
+    }
+
+    if ($bitCount -gt 0) {
+        $index = ($bitBuffer -shl (5 - $bitCount)) -band 0x1F
+        [void]$output.Append($alphabet[$index])
+    }
+
+    return $output.ToString()
+}
+
 function Deploy-LicenseServerAppliance {
     $TimeoutMinutes  = 15
     $PollIntervalSec = 10
 
     try {
         # 1. Target Object Validation
-        Write-Host "[+] Validating vSphere target objects..." -ForegroundColor Cyan
+        Write-Host "[+] Validating vSphere target objects for vApp deployment..." -ForegroundColor Cyan
         $vmHost    = Get-VMHost -Name $jsonInput.vcenter.targetEsx -ErrorAction Stop
         $datastore = Get-Datastore -Name $jsonInput.vcenter.datastore -ErrorAction Stop
 
@@ -1569,12 +1187,14 @@ function Deploy-LicenseServerAppliance {
 
         if ($existingVm) {
             # Warn and skip import
-            Write-Host "[!] VM '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' already exists on this vCenter. Skipping OVA import" -ForegroundColor Yellow
+            Write-Host "[!] Found existing Virtual Machine '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' in this vCenter. Skipping OVA import" -ForegroundColor Yellow
             $importedVm = $existingVm
         } 
         else {
             # 3. Extract OVF configuration & Import (Only run if VM does NOT exist)
-            Write-Host "[+] Extracting OVF configuration..." -ForegroundColor Cyan
+            Write-Host "[+] Extracting Open Virtualization Format (OVF) configuration for License Server..." -ForegroundColor Cyan
+
+            $Script:licenseServerApiKey = Get-RandomApiKey
             $ovfConfigLicenseServer = Get-OvfConfiguration -Ovf $jsonInput.licenseServer.ovaPath
 
             # Configure network and system properties
@@ -1586,6 +1206,7 @@ function Deploy-LicenseServerAppliance {
             $ovfConfigLicenseServer.Common.dns.VCF_License_Server_Appliance.Value           = $jsonInput.dnsServers
             $ovfConfigLicenseServer.Common.ip0.VCF_License_Server_Appliance.Value           = $jsonInput.licenseServer.ipAddress
             $ovfConfigLicenseServer.Common.netmask0.VCF_License_Server_Appliance.Value      = $jsonInput.licenseServer.netmask
+            $ovfConfigLicenseServer.Common.api_key.Value                                    = $licenseServerApiKey
             $ovfConfigLicenseServer.NetworkMapping.Network_1.Value                          = $jsonInput.vcenter.portgroup
 
             Write-Host "[+] Importing vApp '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' from OVA..." -ForegroundColor Cyan
@@ -1607,7 +1228,7 @@ function Deploy-LicenseServerAppliance {
             Write-Host "[+] Powering on VM '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')'..." -ForegroundColor Cyan
             $importedVm = Start-VM -VM $importedVm -Confirm:$false -ErrorAction Stop
         } else {
-            Write-Host "[!] VM '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' is already powered on" -ForegroundColor Yellow
+            Write-Host "[!] Virtual Machine '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' is already powered on" -ForegroundColor Yellow
         }
 
         # 5. Polling Loop with Timeout for Valid IPv4 Address
@@ -1643,7 +1264,7 @@ function Deploy-LicenseServerAppliance {
 
         # 6. Final Status Check
         if ($validIp) {
-            Write-Host "[✓] VM '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' is powered on and reachable at IP: $validIp" -ForegroundColor Green
+            Write-Host "[✓] Virtual Machine '$($jsonInput.licenseServer.fqdn -replace '\..*$', '')' is powered on and reachable at IP: $validIp" -ForegroundColor Green
         } else {
             Write-Warning "[!] Timed out after $TimeoutMinutes minutes waiting for a valid IP address."
             Write-Warning "    - Check if VMware Tools booted properly inside the guest OS."
@@ -1652,6 +1273,599 @@ function Deploy-LicenseServerAppliance {
 
     } catch {
         Write-Error "Deployment failed: $_"
+    }
+}
+
+function New-RsaKeyPair {
+    <#
+    .SYNOPSIS
+        Generates an RSA Public/Private Key Pair using OpenSSL and combines them into a single PEM keypair file.
+
+    .DESCRIPTION
+        This script executes OpenSSL commands to:
+        1. Generate an RSA Private Key (`openssl genpkey -algorithm RSA -out private_key.pem -pkeyopt rsa_keygen_bits:<Bits>`).
+        2. Extract the RSA Public Key (`openssl rsa -pubout -in private_key.pem -out public_key.pem`).
+        3. Combine the Private Key and Public Key into a single PEM file (`keypair.pem`).
+
+    .PARAMETER OutputDirectory
+        Directory where the output PEM files will be created. Defaults to the current working directory.
+
+    .PARAMETER PrivateKeyFile
+        Filename or path for the generated RSA Private Key. Default is 'private_key.pem'.
+
+    .PARAMETER PublicKeyFile
+        Filename or path for the generated RSA Public Key. Default is 'public_key.pem'.
+
+    .PARAMETER CombinedKeyFile
+        Filename or path for the combined Private and Public Key Pair file. Default is 'keypair.pem'.
+
+    .PARAMETER KeyBits
+        RSA key size in bits. Default is 4096.
+
+    .PARAMETER Overwrite
+        Overwrites existing key files if set. Without this switch, the script will abort if destination files exist.
+
+    .EXAMPLE
+        .\New-RsaKeyPair.ps1
+
+        Generates private_key.pem, public_key.pem, and keypair.pem (4096-bit RSA) in the current directory.
+
+    .EXAMPLE
+        .\New-RsaKeyPair.ps1 -OutputDirectory "./certs" -KeyBits 4096 -Overwrite
+
+        Generates 4096-bit RSA keys in the './certs' directory, overwriting any existing key files.
+    #>
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$OutputDirectory = ".",
+
+        [Parameter(Mandatory = $false)]
+        [string]$PrivateKeyFile = "private_key.pem",
+
+        [Parameter(Mandatory = $false)]
+        [string]$PublicKeyFile = "public_key.pem",
+
+        [Parameter(Mandatory = $false)]
+        [string]$CombinedKeyFile = "keypair.pem",
+
+        [Parameter(Mandatory = $false)]
+        [int]$KeyBits = 4096,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$Overwrite
+    )
+
+    process {
+        try {
+            # 1. Check if openssl is installed and accessible in PATH
+            if (-not (Get-Command "openssl" -ErrorAction SilentlyContinue)) {
+                throw "[X] OpenSSL executable ('openssl') was not found in PATH. Please install OpenSSL and ensure it is available in your environment path."
+            }
+
+            # Determine the execution folder of the script (where script file resides)
+            $scriptDir = if ($PSScriptRoot) {
+                $PSScriptRoot
+            } elseif ($MyInvocation.MyCommand.Path) {
+                Split-Path -Parent $MyInvocation.MyCommand.Path
+            } else {
+                $ExecutionContext.SessionState.Path.CurrentFileSystemLocation.Path
+            }
+
+            $system32Path = [System.IO.Path]::GetFullPath((Join-Path -Path $env:SystemRoot -ChildPath "System32"))
+
+            # Helper function to prevent any path from being directed to System32
+            function Resolve-SafeFilePath {
+                param(
+                    [string]$FileNameOrPath,
+                    [string]$DefaultDirectory
+                )
+
+                if ([string]::IsNullOrWhiteSpace($FileNameOrPath)) {
+                    return $null
+                }
+
+                $resolved = if ([System.IO.Path]::IsPathRooted($FileNameOrPath)) {
+                    $FileNameOrPath
+                } else {
+                    Join-Path -Path $DefaultDirectory -ChildPath $FileNameOrPath
+                }
+
+                $fullPath = [System.IO.Path]::GetFullPath($resolved)
+
+                if ($fullPath.StartsWith($system32Path, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $fileNameOnly = [System.IO.Path]::GetFileName($fullPath)
+                    $redirected = Join-Path -Path $scriptDir -ChildPath $fileNameOnly
+                    Write-Host "[!] Target file '$fullPath' was directed to System32. Redirecting to script execution folder: '$redirected'" -ForegroundColor Yellow
+                    return [System.IO.Path]::GetFullPath($redirected)
+                }
+
+                return $fullPath
+            }
+
+            # 2. Resolve output directory base folder
+            $targetBaseDir = $scriptDir
+            if (-not [string]::IsNullOrWhiteSpace($OutputDirectory) -and $OutputDirectory -ne ".") {
+                $candidateDir = if ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
+                    $OutputDirectory
+                } else {
+                    Join-Path -Path $scriptDir -ChildPath $OutputDirectory
+                }
+                $candidateDir = [System.IO.Path]::GetFullPath($candidateDir)
+
+                if ($candidateDir.StartsWith($system32Path, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    Write-Host "[!] OutputDirectory '$candidateDir' resolved to System32. Forcing output to script execution folder: '$scriptDir'" -ForegroundColor Yellow
+                    $targetBaseDir = $scriptDir
+                } else {
+                    $targetBaseDir = $candidateDir
+                }
+            }
+
+            $resolvedDir = [System.IO.Path]::GetFullPath($targetBaseDir)
+            if (-not (Test-Path -Path $resolvedDir)) {
+                Write-Host "[+] Creating output directory: $resolvedDir" -ForegroundColor Cyan
+                [void](New-Item -ItemType Directory -Path $resolvedDir -Force)
+            }
+
+            # 3. Construct absolute target file paths, enforcing execution directory over System32
+            $privateKeyPath  = Resolve-SafeFilePath -FileNameOrPath $PrivateKeyFile  -DefaultDirectory $resolvedDir
+            $publicKeyPath   = Resolve-SafeFilePath -FileNameOrPath $PublicKeyFile   -DefaultDirectory $resolvedDir
+            $combinedKeyPath = Resolve-SafeFilePath -FileNameOrPath $CombinedKeyFile -DefaultDirectory $resolvedDir
+
+            # Ensure target parent directories exist
+            foreach ($filePath in @($privateKeyPath, $publicKeyPath, $combinedKeyPath)) {
+                $parentDir = [System.IO.Path]::GetDirectoryName($filePath)
+                if ($parentDir -and -not (Test-Path -Path $parentDir)) {
+                    [void](New-Item -ItemType Directory -Path $parentDir -Force)
+                }
+            }
+
+            # 4. Check for existing files unless -Overwrite is specified
+            $existingFiles = @($privateKeyPath, $publicKeyPath, $combinedKeyPath) | Where-Object { Test-Path -Path $_ }
+            if ($existingFiles.Count -gt 0 -and -not $Overwrite) {
+                throw "The following target file(s) already exist:`n$($existingFiles -join "`n")`nUse -Overwrite parameter to allow replacing existing files."
+            }
+
+            Write-Host "[+] Generating RSA Key Pair ($KeyBits-bit) using OpenSSL" -ForegroundColor Cyan
+            Write-Host "[+] Output Directory: $resolvedDir" -ForegroundColor Cyan
+
+            # Step 1: Generate Private Key
+            # openssl genpkey -algorithm RSA -out private_key.pem -pkeyopt rsa_keygen_bits:4096
+            Write-Host "[+] Generating RSA Private Key ($KeyBits bits)..." -ForegroundColor Cyan
+            $genPkeyArgs = @(
+                "genpkey",
+                "-algorithm", "RSA",
+                "-out", $privateKeyPath,
+                "-pkeyopt", "rsa_keygen_bits:$KeyBits"
+            )
+            Write-Verbose "Executing: openssl $($genPkeyArgs -join ' ')"
+            $genPkeyOutput = & openssl @genPkeyArgs 2>&1
+
+            if ($LASTEXITCODE -ne 0) {
+                $errDetail = ($genPkeyOutput | Out-String).Trim()
+                throw "OpenSSL failed to generate private key. OpenSSL returned exit code $LASTEXITCODE. Details: $errDetail"
+            }
+            if (-not (Test-Path -Path $privateKeyPath)) {
+                throw "OpenSSL returned exit code 0, but the expected private key file was not created at '$privateKeyPath'."
+            }
+            Write-Host "[✓] Created private key: $privateKeyPath" -ForegroundColor Green
+
+            # Step 2: Extract Public Key
+            # openssl rsa -pubout -in private_key.pem -out public_key.pem
+            Write-Host "[+] Extracting RSA Public Key..." -ForegroundColor Cyan
+            $rsaPubArgs = @(
+                "rsa",
+                "-pubout",
+                "-in", $privateKeyPath,
+                "-out", $publicKeyPath
+            )
+            Write-Verbose "Executing: openssl $($rsaPubArgs -join ' ')"
+            $rsaPubOutput = & openssl @rsaPubArgs 2>&1
+
+            if ($LASTEXITCODE -ne 0) {
+                $errDetail = ($rsaPubOutput | Out-String).Trim()
+                throw "OpenSSL failed to extract public key. OpenSSL returned exit code $LASTEXITCODE. Details: $errDetail"
+            }
+            if (-not (Test-Path -Path $publicKeyPath)) {
+                throw "OpenSSL returned exit code 0, but the expected public key file was not created at '$publicKeyPath'."
+            }
+            Write-Host "[✓] Created public key: $publicKeyPath" -ForegroundColor Green
+
+            # Step 3: Combine Private Key and Public Key into Keypair File
+            # cat private_key.pem public_key.pem > keypair.pem
+            Write-Host "[+] Combining private and public key into combined keypair..." -ForegroundColor Cyan
+            $privateContent = [System.IO.File]::ReadAllText($privateKeyPath)
+            $publicContent  = [System.IO.File]::ReadAllText($publicKeyPath)
+
+            # Cleanly join content with LF newlines without UTF-8 BOM
+            $combinedContent = $privateContent.TrimEnd() + "`n" + $publicContent.TrimEnd() + "`n"
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($combinedKeyPath, $combinedContent, $utf8NoBom)
+
+            if (-not (Test-Path -Path $combinedKeyPath)) {
+                throw "Failed to create combined keypair file at '$combinedKeyPath'."
+            }
+            Write-Host "[✓] Created combined keypair: $combinedKeyPath" -ForegroundColor Green
+            Write-Host "[✓] Key pair generation completed successfully" -ForegroundColor Green
+
+        }
+        catch {
+            Write-Error "An error occurred during key pair generation: $_"
+            throw $_
+        }
+    }
+}
+
+function Get-VmApiKey {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true, Position = 0)]
+        [psobject]$VM
+    )
+
+    process {
+        # 1. Resolve VM object if a string VM name was provided
+        $vmObject = $null
+        if ($VM -is [string]) {
+            if (-not (Get-Command -Name Get-VM -ErrorAction SilentlyContinue)) {
+                throw "VMware PowerCLI module (VMware.VimAutomation.Core) is required when passing VM by name string."
+            }
+            Write-Verbose "Fetching VM object for name '$VM'..."
+            $vmObject = Get-VM -Name $VM -ErrorAction Stop
+        } else {
+            $vmObject = $VM
+        }
+
+        if (-not $vmObject) {
+            throw "Invalid or null VM input provided."
+        }
+
+        # Determine VM name for log/warning outputs
+        $vmName = if ($vmObject.Name) { $vmObject.Name } else { $vmObject.ToString() }
+
+        # 2. Access VAppConfig from PowerCLI VirtualMachine object or vSphere API MoRef object
+        $vAppConfig = $null
+        if ($vmObject.PSObject.Properties['ExtensionData'] -and $vmObject.ExtensionData.Config) {
+            $vAppConfig = $vmObject.ExtensionData.Config.VAppConfig
+        } elseif ($vmObject.PSObject.Properties['Config']) {
+            $vAppConfig = $vmObject.Config.VAppConfig
+        }
+
+        if (-not $vAppConfig -or -not $vAppConfig.Property) {
+            Write-Warning "No vApp options/properties are configured on VM '$vmName'."
+            return $null
+        }
+
+        # 3. Locate the 'api_key' vApp property
+        $targetKey = "api_key"
+        $property = $vAppConfig.Property | Where-Object {
+            $_.Id -ieq $targetKey -or 
+            $_.Id -ieq "guestinfo.$targetKey" -or
+            $_.Label -ieq $targetKey
+        } | Select-Object -First 1
+
+        # Fallback substring search if key formatted with prefix/suffix (e.g. guestinfo.api_key)
+        if (-not $property) {
+            $property = $vAppConfig.Property | Where-Object {
+                $_.Id -ilike "*$targetKey*"
+            } | Select-Object -First 1
+        }
+
+        if (-not $property) {
+            Write-Warning "vApp option 'api_key' was not found on VM '$vmName'."
+            return $null
+        }
+
+        # 4. Extract and return the configured value (or DefaultValue if value field is empty)
+        $value = $property.Value
+        if ([string]::IsNullOrEmpty($value)) {
+            $value = $property.DefaultValue
+        }
+
+        return $value
+    }
+}
+
+function Install-OperationsKeyPair {
+    [CmdletBinding()]
+    param(
+        [Parameter (Mandatory = $true, HelpMessage = "Path to the combined public/private keypair .pem file")] [Alias("PemPath", "FilePath")] [string]$KeypairPath,
+        [Parameter (Mandatory = $false)] [switch]$VerifyStatus,
+        [Parameter (Mandatory = $false)] [switch]$SkipCertificateCheck
+    )
+
+    process {
+        try {
+            Write-Host "[+] Attempting to upload key pair to VCF Operations..." -ForegroundColor Cyan
+
+            # ---------------------------------------------------------
+            # Step 1: Verify Keypair File Existence
+            # ---------------------------------------------------------
+            Write-Host "[+] Validating the existence of the Key Pair file for '$VcfOpsHost'..." -ForegroundColor Cyan
+            
+            $targetPath = $KeypairPath
+            if (-not (Test-Path -Path $targetPath)) {
+                $fileNameOnly = [System.IO.Path]::GetFileName($KeypairPath)
+                $cwdPath = Join-Path -Path (Get-Location).Path -ChildPath $fileNameOnly
+                $tmpPath = Join-Path -Path "/tmp" -ChildPath $fileNameOnly
+
+                if (Test-Path -Path $cwdPath) {
+                    Write-Host "[!] File not found at '$KeypairPath', but found in current directory" -ForegroundColor Yellow
+                    $targetPath = $cwdPath
+                } elseif (Test-Path -Path $tmpPath) {
+                    Write-Host "[!] File not found at '$KeypairPath', but found in /tmp: '$tmpPath'." -ForegroundColor Yellow
+                    $targetPath = $tmpPath
+                } else {
+                    $currentDir = (Get-Location).Path
+                    throw "Specified keypair PEM file was not found at '$KeypairPath'. (Current Working Directory: '$currentDir')"
+                }
+            }
+
+            $resolvedKeypairPath = (Get-Item -Path $targetPath).FullName
+            Write-Host "[✓] Using combined keypair file: $resolvedKeypairPath" -ForegroundColor Green
+
+            # Normalize and validate PEM keypair format (ensure 5 dashes, LF line endings, no UTF-8 BOM)
+            $pemRawContent = [System.IO.File]::ReadAllText($resolvedKeypairPath)
+            $pemCleanContent = $pemRawContent.Trim()
+
+            # Fix headers/footers to standard 5-dash PEM format if needed
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*BEGIN\s+PRIVATE\s+KEY\s*-+", "-----BEGIN PRIVATE KEY-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*END\s+PRIVATE\s+KEY\s*-+", "-----END PRIVATE KEY-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*BEGIN\s+RSA\s+PRIVATE\s+KEY\s*-+", "-----BEGIN RSA PRIVATE KEY-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*END\s+RSA\s+PRIVATE\s+KEY\s*-+", "-----END RSA PRIVATE KEY-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*BEGIN\s+PUBLIC\s+KEY\s*-+", "-----BEGIN PUBLIC KEY-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*END\s+PUBLIC\s+KEY\s*-+", "-----END PUBLIC KEY-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*BEGIN\s+CERTIFICATE\s*-+", "-----BEGIN CERTIFICATE-----"
+            $pemCleanContent = $pemCleanContent -replace "(?m)^\s*-+\s*END\s+CERTIFICATE\s*-+", "-----END CERTIFICATE-----"
+
+            # Standardize line endings to LF (\n)
+            $pemCleanContent = ($pemCleanContent -split "\r?\n" | Where-Object { $_ -match "\S" -or $_ -match "-----" }) -join "`n" + "`n"
+
+            # Check for essential PEM markers
+            $hasPrivateKey = $pemCleanContent -match "-----BEGIN (RSA )?PRIVATE KEY-----"
+            $hasPublicKey  = $pemCleanContent -match "-----BEGIN (PUBLIC KEY|CERTIFICATE)-----"
+
+            if (-not $hasPrivateKey) {
+                Write-Host "[!] Warning: PEM file is missing '-----BEGIN PRIVATE KEY-----' header." -ForegroundColor Yellow
+            }
+            if (-not $hasPublicKey) {
+                Write-Host "[!] Warning: PEM file is missing '-----BEGIN PUBLIC KEY-----' or '-----BEGIN CERTIFICATE-----' header." -ForegroundColor Yellow
+            }
+
+            # Save clean PEM file with original filename without UTF-8 BOM to temporary location
+            $originalFileName = [System.IO.Path]::GetFileName($resolvedKeypairPath)
+            $uploadPemPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath $originalFileName
+            $utf8NoBOM = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($uploadPemPath, $pemCleanContent, $utf8NoBOM)
+
+            # ---------------------------------------------------------
+            # Steps 2 : Update Header with Additional Values
+            # ---------------------------------------------------------
+            
+            $internalHeaders = @{}
+            foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+            $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+            $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
+
+            # ---------------------------------------------------------
+            # Steps 3-5: Upload Key Pair (/internal/license-manager/identity/keypair)
+            # ---------------------------------------------------------
+
+            $candidateUploadUrls = @(
+                "https://${operationsFqdn}/suite-api/api/internal/license-manager/identity/keypair",
+                "https://${operationsFqdn}/suite-api/internal/license-manager/identity/keypair"
+            )
+
+            # Candidate form field keys expected by backend API (Spring controller)
+            $candidateFormKeys = @("file", "keypair", "keyPair")
+
+            $uploadSuccess = $false
+            $uploadResult = $null
+            $lastUploadError = $null
+
+            foreach ($uploadUrl in $candidateUploadUrls) {
+                foreach ($formKey in $candidateFormKeys) {
+                    Write-Verbose "Attempting upload to URL: $uploadUrl (Form field: $formKey)"
+                    try {
+                        $splatUpload = @{
+                            Uri        = $uploadUrl
+                            Method     = 'Post'
+                            Headers    = $internalHeaders
+                            Form       = @{
+                                $formKey = Get-Item -Path $uploadPemPath
+                            }
+                            WebSession = $webSession
+                        }
+                        if ($SkipCertificateCheck) {
+                            $splatUpload['SkipCertificateCheck'] = $true
+                        }
+
+                        $uploadResult = Invoke-RestMethod @splatUpload
+                        $uploadSuccess = $true
+                        Write-Host "[✓] Key pair successfully uploaded to VCF Operations!" -ForegroundColor Green
+                        break
+                    }
+                    catch {
+                        $lastUploadError = $_
+                        if ($_.Exception.Response) {
+                            try {
+                                $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                                $resBody = $reader.ReadToEnd()
+                                $reader.Close()
+                                if ($resBody) { $lastUploadError = $resBody }
+                            } catch {}
+                        }
+                        Write-Verbose "Upload to '$uploadUrl' with form field '$formKey' failed: $lastUploadError"
+                    }
+                }
+                if ($uploadSuccess) { break }
+            }
+
+            if (-not $uploadSuccess) {
+                throw "Keypair upload failed on all candidate endpoints. Last error: $lastUploadError"
+            }
+
+            # ---------------------------------------------------------
+            # Steps 6 & 7: Optional Status Verification
+            # ---------------------------------------------------------
+            $statusResult = $null
+            if ($VerifyStatus) {
+                Write-Host "[+] Verifying VCF Operations registration and private mode status..." -ForegroundColor Cyan
+                
+                $candidateStatusUrls = @(
+                    "https://${operationsFqdn}/suite-api/api/internal/license-manager/registration/status",
+                    "https://${operationsFqdn}/suite-api/internal/license-manager/registration/status"
+                )
+
+                foreach ($statusUrl in $candidateStatusUrls) {
+                    Write-Verbose "Attempting status query to URL: $statusUrl"
+                    try {
+                        $splatStatus = @{
+                            Uri        = $statusUrl
+                            Method     = 'Get'
+                            Headers    = $internalHeaders
+                            WebSession = $webSession
+                        }
+                        if ($SkipCertificateCheck) {
+                            $splatStatus['SkipCertificateCheck'] = $true
+                        }
+
+                        $statusResult = Invoke-RestMethod @splatStatus
+                        if ($($statusResult.connectivityMode) -eq "PRIVATE") {
+                            Write-Host "[✓] Registration Status Response: $($statusResult.connectivityMode)" -ForegroundColor Green
+                        } else {
+                            Write-Host "[x] Registration Status Response: $($statusResult.connectivityMode)" -ForegroundColor Red
+                        }
+                        #$statusResult | Format-List | Out-String | Write-Host
+                        break
+                    }
+                    catch {
+                        Write-Verbose "Status query to '$statusUrl' failed: $_"
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Error "Error uploading key pair to VCF Operations: $_"
+            throw $_
+        }
+    }
+}
+
+function Install-LicenseServerKeyPair {
+    
+    [CmdletBinding()]
+    param(
+        [Parameter (Mandatory = $false, Position = 0)] [string]$LicenseServerFqdn,
+        [Parameter (Mandatory = $false, Position = 1)] [string]$ApiKey,
+        [Parameter (Mandatory = $false, Position = 2)] [string]$KeyPairPemFilePath,
+        [Parameter (Mandatory = $false)] [switch]$VerifyStatus,
+        [Parameter (Mandatory = $false)] [switch]$SkipCertificateCheck = $true
+    )
+
+    process {
+        try {
+            Write-Host "[+] Attempting to upload key pair to License Server..." -ForegroundColor Cyan
+
+            # ---------------------------------------------------------
+            # Step 1: Verify Keypair File Existence
+            # ---------------------------------------------------------
+            Write-Host "[+] Validating the existence of the Key Pair file for '$LicenseServerFqdn'..." -ForegroundColor Cyan
+            
+            $targetPath = $KeyPairPemFilePath
+            if (-not (Test-Path -Path $targetPath)) {
+                $fileNameOnly = [System.IO.Path]::GetFileName($KeyPairPemFilePath)
+                $cwdPath = Join-Path -Path (Get-Location).Path -ChildPath $fileNameOnly
+                $tmpPath = Join-Path -Path "/tmp" -ChildPath $fileNameOnly
+
+                if (Test-Path -Path $cwdPath) {
+                    Write-Host "[!] File not found at '$KeyPairPemFilePath', but found in current directory" -ForegroundColor Yellow
+                    $targetPath = $cwdPath
+                } elseif (Test-Path -Path $tmpPath) {
+                    Write-Host "[!] File not found at '$KeyPairPemFilePath', but found in /tmp: '$tmpPath'." -ForegroundColor Yellow
+                    $targetPath = $tmpPath
+                } else {
+                    $currentDir = (Get-Location).Path
+                    throw "Specified keypair PEM file was not found at '$KeyPairPemFilePath'. (Current Working Directory: '$currentDir')"
+                }
+            }
+
+            $resolvedKeypairPath = (Get-Item -Path $targetPath).FullName
+            Write-Host "[✓] Using combined keypair file: $resolvedKeypairPath" -ForegroundColor Green
+
+            # ---------------------------------------------------------
+            # Steps 2: Install Key Pair to License Server
+            # ---------------------------------------------------------
+            if (-not (Test-Path -Path $KeyPairPemFilePath)) {
+                throw "Private key PEM file was not found at path: '$KeyPairPemFilePath'"
+            }
+
+            $pemItem = Get-Item -Path $KeyPairPemFilePath
+            $licenseServerHeaders = @{
+                "X-API-Key" = $ApiKey
+            }
+
+            $uri = "https://${LicenseServerFqdn}/lss/external/api/v1/identity/key"
+
+            $restParams = @{
+                Uri     = $uri
+                Method  = "Post"
+                Headers = $licenseServerHeaders
+                Form    = @{ file = $pemItem }
+            }
+
+            if ($SkipCertificateCheck) {
+                $restParams["SkipCertificateCheck"] = $true
+            }
+
+            Write-Host "[+] Uploading key pair'$KeyPairPemFilePath' to License Server..."  -ForegroundColor Cyan
+            Invoke-RestMethod @restParams | Out-Null
+
+            # ---------------------------------------------------------
+            # Steps 3: Optional Status Verification
+            # ---------------------------------------------------------
+            $statusResult = $null
+            if ($VerifyStatus) {
+                Write-Host "[+] Verifying License Server registration and private mode status..." -ForegroundColor Cyan
+
+                # Construct Internal Headers
+                $internalHeaders = @{}
+                foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+                $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
+                $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+                # Candidate URLs (with and without /api)
+                $candidateUrls = @(
+                    "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/license-servers",
+                    "https://${operationsFqdn}/suite-api/api/internal/extension/vcf-license-cloud-integration/license-servers"
+                )
+
+                $success = $false
+                foreach ($url in $candidateUrls) {
+                    try {
+                        $GLobal:response = Invoke-RestMethod -Uri $url -Method Get -Headers $internalHeaders -SkipCertificateCheck
+                        if ($($response.registrationStatus) -eq "PRIVATE") {
+                            Write-Host "[✓] License Server registration status response: $($response.registrationStatus)" -ForegroundColor Green
+                        } else {
+                            Write-Host "[x] License Server registration status response: $($response.registrationStatus)" -ForegroundColor Red
+                        }
+                        $success = $true
+                        break
+                    }
+                    catch {
+                        Write-Host "[!] Failed on URL '$url': $_" -ForegroundColor Yellow
+                    }
+                }
+
+                if (-not $success) {
+                    Write-Error "Failed to reach License Servers endpoint on all candidate URLs."
+                }
+            }
+        } catch {
+            Write-Error "Error uploading key pair to VCF Operations: $_"
+            throw $_
+        }
     }
 }
 
@@ -1796,150 +2010,292 @@ function Get-ConfirmationFile {
     }
 }
 
-function Import-LicenseFile {
+function Import-OperationsLicenseFile {
     param (
         [Parameter (Mandatory = $true)] [String]$licenseFile
     )
 
     try {
-        if (-not (Test-Path -Path $licenseFile -PathType Leaf)) {
-            Write-Host "[x] '$licenseFile -PathType' is not a valid file." -ForegroundColor Red
-        } else {
-            Write-Host "[+] Attempting to upload the license file to VCF Operations ..."
+        if (-Not (Get-OperationsLicense)) {
+            if (-not (Test-Path -Path $licenseFile -PathType Leaf)) {
+                Write-Host "[x] '$licenseFile' is not a valid file." -ForegroundColor Red
+            } else {
+                Write-Host "[+] Attempting to upload the license file to VCF Operations ..." -ForegroundColor Cyan
 
-            $internalHeaders = @{}
-            foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
-            $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+                $internalHeaders = @{}
+                foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+                $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+                $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
 
-            # Prepare the multipart form data payload using Get-Item
-            $uploadForm = @{
-                file = Get-Item -Path $licenseFile
+                # Prepare the multipart form data payload using Get-Item
+                $uploadForm = @{
+                    file = Get-Item -Path $licenseFile
+                }
+
+                $uploadResults = Invoke-RestMethod -Method POST `
+                    -Uri "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/registration/offline/response" `
+                    -Headers $internalHeaders `
+                    -Form $uploadForm `
+                    -SkipCertificateCheck
+
+                Write-Host "[✓] Uploaded license file to VCF Operations successfully" -ForegroundColor Green
             }
-
-            # Upload the file
-            $uploadResults = Invoke-RestMethod -Method POST `
-                -Uri "https://${operationsAppliance}/suite-api/internal/extension/vcf-license-cloud-integration/registration/offline/response" `
-                -Headers $internalHeaders `
-                -Form $uploadForm `
-                -SkipCertificateCheck
-
-            Write-Host "[✓] Uploaded license file to VCF Operations successfully" -ForegroundColor Green
+        } else {
+            Write-Host "[!] Licenses already exist in VCF Operations" -ForegroundColor Yellow
         }
     } catch {
         Write-Error $_.Exception.Message
     }
 }
 
-function Import-PublicPrivateKey {
-    [CmdletBinding()]
-    param (
-        [Parameter (Mandatory=$true)] [string]$Hostname,
-        [Parameter (Mandatory=$true)] [string]$PublicKeyFile,
-        [Parameter (Mandatory=$true)] [string]$PrivateKeyFile
+function Get-LicenseRegistrationStatus {
+
+    $internalHeaders = @{}
+    foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+    $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+    Invoke-RestMethod -Method Get -Uri "https://$operationsFqdn/suite-api/internal/extension/vcf-license-cloud-integration/license-servers" -Headers $internalHeaders -SkipCertificateCheck
+}
+
+function Get-OperationsLicenseServers {
+    # Construct Internal Headers
+    $internalHeaders = @{}
+    foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+    $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
+    $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+    # Candidate URLs (with and without /api)
+    $candidateUrls = @(
+        "https://${operationsFqdn}/suite-api/internal/extension/vcf-license-cloud-integration/license-servers",
+        "https://${operationsFqdn}/suite-api/api/internal/extension/vcf-license-cloud-integration/license-servers"
     )
 
-    # Check if key files exist
-    if (Test-Path -Path $PublicKeyFile) {
-        if (Test-Path -Path $PrivateKeyFile) {
-            # Create a temporary file for the combined keypair (using .pem extension for accurate MIME typing)
-            $tempDir = [System.IO.Path]::GetTempPath()
-            $keypairFile = New-Item -Path $tempDir -Name "keypair_$([guid]::NewGuid()).pem" -ItemType File -Force
+    $success = $false
+    foreach ($url in $candidateUrls) {
+        try {
+            $response = Invoke-RestMethod -Uri $url -Method Get -Headers $internalHeaders -SkipCertificateCheck
+            $response
+            #$response | Format-Table -Property name, fqdn, ip, registrationStatus, connectivityStatus, lastLicenseRefreshDate
+            $success = $true
+            break
+        }
+        catch {
+            Write-Host "[!] Failed on URL '$url': $_" -ForegroundColor Yellow
+        }
+    }
 
-            # Combine private and public keys into the temporary file (Private first, exactly like the bash script)
-            Get-Content -Path $PrivateKeyFile | Set-Content -Path $keypairFile.FullName
-            Get-Content -Path $PublicKeyFile | Add-Content -Path $keypairFile.FullName
-            
-            try {
-                $internalHeaders = @{}
-                foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
-                $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+    if (-not $success) {
+        Write-Error "Failed to reach License Servers endpoint on all candidate URLs."
+    }
+}
 
-                Write-Host "[+] Attempting to upload key pair for $Hostname..." -ForegroundColor Cyan
+function Wait-LicenseStatus{
+    $maxAttempts = 30
+    $attempt = 0
+    $intervalSeconds = 5
 
-                # Prepare multipart/form-data payload (similar to curl -F)
-                $form = @{
-                    keypair = Get-Item -Path $keypairFile.FullName
+    do {
+        $attempt++
+        $status = (Get-OperationsLicenseServers).registrationStatus
+        
+        # Pad with trailing spaces to clear any remnants from longer previous text
+        Write-Host "`r[!] Current Status: $status" -NoNewline -ForegroundColor Yellow
+        if ($status -eq 'PRIVATE') {
+            Write-Host "`n[✓] Success: Registration status reached PRIVATE." -ForegroundColor Green
+            break
+        }
+
+        if ($attempt -ge $maxAttempts) {
+            Write-Host "" # Move cursor down to prevent Write-Warning from colliding
+            Write-Warning "Timeout reached after $maxAttempts attempts without reaching PRIVATE."
+            break
+        }
+
+        Start-Sleep -Seconds $intervalSeconds
+    } while ($true)
+}
+
+function Get-OperationsLicense {
+
+    $internalHeaders = @{}
+    foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+    $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
+    $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+    Invoke-RestMethod -Method Get -Uri "https://${operationsFqdn}/suite-api/internal/licenses" -Headers $internalHeaders -SkipCertificateCheck
+
+}
+
+function Get-OperationsVcenters {
+
+    $internalHeaders = @{}
+    foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+    $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
+    $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+    (Invoke-RestMethod -Method Get -Uri "https://${operationsFqdn}/suite-api/internal/licenses/vcenter-usages" -Headers $internalHeaders -SkipCertificateCheck).content
+
+}
+
+function Install-OperationsLicense {
+    param (
+        [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$vcenterFqdn,
+        [Parameter (Mandatory = $false)] [ValidateSet('vSphere', 'vSAN')] [String]$licenseType
+    )
+
+    Write-Host "[+] Attempting to assign license of type '$licenseType' to vCenter '$vcenterFqdn'..." -ForegroundColor Cyan
+    $internalHeaders = @{}
+    foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
+    $internalHeaders["X-vRealizeOps-API-use-internal"] = "true"
+    $internalHeaders["X-Ops-API-use-unsupported"] = "true"
+
+    $vcenters = (Get-OperationsVcenters) | Where-Object {$_.productFamily -eq $licenseType -and $_.vcHost -eq $vcenterFqdn }
+    $licenses = (Get-OperationsLicense) | Where-Object {$_.productFamily -eq $licenseType}
+
+    if ($vcenters) {
+        $body = ConvertTo-Json -InputObject @(
+            @{
+                vcenter = @{
+                    id          = $vcenters.vcId
+                    adapterName = $vcenters.vcAdapterName
+                    host        = $vcenters.vcHost
                 }
-
-                $uploadResponse = Invoke-RestMethod -Method Post `
-                    -Uri "https://$operationsAppliance/suite-api/internal/extension/vcf-license-cloud-integration/identity/keypair" `
-                    -Headers $internalHeaders `
-                    -Form $form `
-                    -SkipCertificateCheck
-
-                Write-Host ""
-                if ($null -eq $uploadResponse -or [string]::IsNullOrWhiteSpace($uploadResponse)) {
-                    Write-Host "[✓] Uploaded key pair for $Hostname successfully" -ForegroundColor Green
-                } else {
-                    Write-Host "[x] Upload Response:" -ForegroundColor Red
-                    $uploadResponse | ConvertTo-Json -Depth 5 | Write-Host
-                }
+                allocationIds = @($licenses.licenseAllocationId)
             }
-            catch {
-                Write-Error "An error occurred during execution: $($_.Exception.Message)"
-            }
-            finally {
-                # Clean up temporary file
-                if (Test-Path -Path $keypairFile.FullName) {
-                    Remove-Item -Path $keypairFile.FullName -Force
-                }
+        ) -Depth 4
+
+        $response = Invoke-RestMethod -Method Post -Uri "https://${operationsFqdn}/suite-api/internal/extension/vcf-entitlement/assign" -Headers $internalHeaders -Body $body -SkipCertificateCheck
+        Write-Host "[+] License of type '$licenseType' assigned to vCenter completed successfully..." -ForegroundColor Green
+    } else {
+        Write-Host "[x] No vCenters found in VCF Operations to assign licenses" -ForegroundColor Red
+    }
+}
+
+function Invoke-PublicPrivateKey {
+
+    Param (
+            [Parameter (Mandatory = $false)] [ValidateNotNullOrEmpty()] [String]$jsonFile = ".\operationsDeployment.json"
+    )
+
+    # Generate Private and Public Keys and Import into VCF Operations & License Server
+    New-RsaKeyPair -OutputDirectory ".\" -Overwrite -PrivateKeyFile ($jsonInput.operations.master.fqdn + "-private_key.pem") -PublicKeyFile ($jsonInput.operations.master.fqdn + "-public_key.pem") -CombinedKeyFile ($jsonInput.operations.master.fqdn + "-keypair.pem")
+    New-RsaKeyPair -OutputDirectory ".\" -Overwrite -PrivateKeyFile ($jsonInput.licenseServer.fqdn + "-private_key.pem") -PublicKeyFile ($jsonInput.licenseServer.fqdn + "-public_key.pem") -CombinedKeyFile ($jsonInput.licenseServer.fqdn + "-keypair.pem")
+}
+
+function Invoke-OperationsDeployment {
+    <#
+        .SYNOPSIS
+        Deployment of VCF Operations and License Server Appliances
+
+        .DESCRIPTION
+        The Invoke-OperationsDeployment cmdlet is a single function to deploy and configure VCF Operations and
+        License Server.
+
+        .EXAMPLE
+        Invoke-OperationsDeployment -jsonFile .\operationsDeploySpec.json
+        This example deploy and configure VCF Operations and License Server using the JSON spec supplied.
+
+        .PARAMETER jsonFile
+        The path to the JSON specification file to be used.
+    #>
+
+    Param (
+            [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$jsonFile = ".\operationsDeployment.json"
+    )
+    # Main Script
+
+    Try {
+        Write-Host "[+] Starting the Deployment of $solutionName" -ForegroundColor Cyan
+        if (Test-Path -Path $jsonFile) {
+            $Global:jsonInput = (Get-Content -Path $jsonFile) | ConvertFrom-Json
+            if (Test-VsphereAuthentication -server $jsonInput.vcenter.fqdn -user $jsonInput.vcenter.username -pass $jsonInput.vcenter.password) {
+                Deploy-VCFOperationsAppliance # Attempt to deploy the OVA and create a new VM and power it on
+                Wait-OperationsApplianceReady -IPAddress $jsonInput.operations.master.fqdn | Out-Null # Poll the powered on VM checking the Web service availability
+
+                $vmName = $fqdn -replace '\..*$', ''
+                $vm = Get-VM -Name ($jsonInput.operations.master.fqdn -replace '\..*$', '') -ErrorAction SilentlyContinue
+                Wait-OperationsFirstbootComplete -VM $vm -GuestUser root -GuestPassword $jsonInput.operations.rootPassword  | Out-Null
+
+                # Retrieve VCF Operations SHA-256 Thumbprint
+                $thumbprintInfo = Get-VCFNodeThumbprint -FQDN $jsonInput.operations.master.fqdn
+                $thumbprint = $thumbprintInfo.SHA256
+
+                # Call New-VCFClusterPayload to create the JSON payload for the VCF Operations initialization
+                $jsonPayload = New-VCFClusterPayload -fqdn $jsonInput.operations.master.fqdn -IPAddress $jsonInput.operations.master.ipAddress -thumbprint $thumbprint -AdminPassword $jsonInput.operations.adminPassword -NtpServers $jsonInput.ntpServers
+
+                # Initialize VCF Operations 
+                Initialize-Operations -fqdn $jsonInput.operations.master.fqdn -adminPassword $jsonInput.operations.adminPassword -jsonPayload $jsonPayload | Out-Null
+                
+                Request-OperationsToken -fqdn $jsonInput.operations.master.fqdn -username admin -password $jsonInput.operations.adminPassword
+                Set-EulaSetting # Accept the EULA
+                Set-CeipSetting -status DISABLED # Disable the CEIP setting
+                Add-VcenterAdapter -VcenterFqdn $jsonInput.vcenter.fqdn -VcenterUser $jsonInput.vcenter.username -VcenterPass $jsonInput.vcenter.password
+
+                # Deploy and Register a License Server
+                Request-LicenseServerOTK # Request a one time key (OTK) for the registration of the License Server with VCF Operations
+                Deploy-LicenseServerAppliance # Deploy the License Server appliance
+
             }
         } else {
-            Write-Host "[x] Error: Private key file not found: $PrivateKeyFile"  -ForegroundColor Red
+            Write-Host "[x] JSON Specification file ($jsonFile): File Not Found" -ForegroundColor Red
         }
-    } else {
-        Write-Host "[x] Error: Public key file not found: $PublicKeyFile" -ForegroundColor Red
+    } Catch {
+        Write-Error $_.Exception.Message
     }
-
 }
 
-# Main Script
+function Invoke-OperationsLicenseInstall {
+    <#
+        .SYNOPSIS
+        Deployment of VCF Operations and License Server Appliances
 
-Try {
-    Write-Host "[+] Starting the Deployment of $solutionName" -ForegroundColor Cyan
-    if (Test-Path -Path $jsonFile) {
-        $Global:jsonInput = (Get-Content -Path $jsonFile) | ConvertFrom-Json
-        if (Test-VsphereAuthentication -server $jsonInput.vcenter.fqdn -user $jsonInput.vcenter.username -pass $jsonInput.vcenter.password) {
-            Deploy-VCFOperationsAppliance # Attempt to deploy the OVA and create a new VM and power it on
-            Wait-OperationsApplianceReady -IPAddress $jsonInput.operations.master.fqdn | Out-Null # Poll the powered on VM checking the Web service availability
+        .DESCRIPTION
+        The Invoke-OperationsLicenseInstall cmdlet is a single function to deploy and configure VCF Operations and
+        License Server.
 
-            #$vmName = $fqdn -replace '\..*$', ''
-            $vm = Get-VM -Name ($jsonInput.operations.master.fqdn -replace '\..*$', '') -ErrorAction SilentlyContinue
-            Wait-OperationsFirstbootComplete -VM $vm -GuestUser root -GuestPassword $jsonInput.operations.rootPassword  | Out-Null
+        .EXAMPLE
+        Invoke-OperationsLicenseInstall -jsonFile .\operationsDeploySpec.json
+        This example deploy and configure VCF Operations and License Server using the JSON spec supplied.
 
-            # Retrieve VCF Operations SHA-256 Thumbprint
-            $thumbprintInfo = Get-VCFNodeThumbprint -FQDN $jsonInput.operations.master.fqdn
-            $thumbprint = $thumbprintInfo.SHA256
+        .PARAMETER jsonFile
+        The path to the JSON specification file to be used.
+    #>
 
-            # Call New-VCFClusterPayload to create the JSON payload for the VCF Operations initialization
-            $jsonPayload = New-VCFClusterPayload -fqdn $jsonInput.operations.master.fqdn -IPAddress $jsonInput.operations.master.ipAddress -thumbprint $thumbprint -AdminPassword $jsonInput.operations.adminPassword -NtpServers $jsonInput.ntpServers
+    Param (
+            [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$jsonFile = ".\operationsDeployment.json"
+    )
+    # Main Script
 
-            # Initialize VCF Operations 
-            Initialize-Operations -fqdn $jsonInput.operations.master.fqdn -adminPassword $jsonInput.operations.adminPassword -jsonPayload $jsonPayload | Out-Null
-            
+    Try {
+        Write-Host "[+] Starting the $solutionName of Key Pair and License File" -ForegroundColor Cyan
+        if (Test-Path -Path $jsonFile) {
+            $Global:jsonInput = (Get-Content -Path $jsonFile) | ConvertFrom-Json
+
+            # Authenticate to VCF Operations
             Request-OperationsToken -fqdn $jsonInput.operations.master.fqdn -username admin -password $jsonInput.operations.adminPassword
-            Set-EulaSetting # Accept the EULA
-            Set-CeipSetting -status DISABLED # Disable the CEIP setting
-            Add-VcenterAdapter -fqdn $jsonInput.vcenter.fqdn -username $jsonInput.vcenter.username -password $jsonInput.vcenter.password # Add the vCenter Server adapter to VCF Operations and start collection
 
-            # Deploy and Register a License Server
-            Request-LicenseServerOTK # Request a one time key (OTK) for the registration of the License Server with VCF Operations
-            Deploy-LicenseServerAppliance # Deploy the License Server appliance
+            # Import the License Server Key Pair into VCF Operations and License Server
+            $licenseServerVmName = $jsonInput.licenseServer.fqdn.Split('.')[0]
+            $licenseServerApiKey = Get-VmApiKey -VM $licenseServerVmName
+            Install-OperationsKeyPair -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -VerifyStatus -SkipCertificateCheck
+            Install-LicenseServerKeyPair -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -KeyPairPemFilePath ($jsonInput.licenseServer.fqdn + "-keypair.pem")
+            Wait-LicenseStatus
 
             # License the system
-            # Get-RegistrationFile # Download the license registration file from VCF Operations
-            # Write-Host "Manually upload the registration file to Business Console and download the verification file"
-            # pause
-            # Import-VerificationFile
-            # Get-ConfirmationFile
+            Import-OperationsLicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
+            # Assign Licenses to vCenter
+            Install-OperationsLicense -vcenterFqdn $jsonInput.vcenter.fqdn -licenseType vSphere
+            Install-OperationsLicense -vcenterFqdn $jsonInput.vcenter.fqdn -licenseType vSAN
 
+        } else {
+            Write-Host "[x] JSON Specification file ($jsonFile): File Not Found" -ForegroundColor Red
         }
-    } else {
-        Write-Host "[x] JSON Specification file ($jsonFile): File Not Found" -ForegroundColor Red
+    } Catch {
+        Write-Error $_.Exception.Message
     }
-} Catch {
-    Write-Error $_.Exception.Message
 }
+
+Start-OperationsInstall
 
 # Restore default preference
 $ProgressPreference = $previousProgressPreference
