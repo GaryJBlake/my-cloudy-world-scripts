@@ -899,7 +899,6 @@ function Start-OperationsAdapterCollection {
     return $allStarted
 }
 
-
 function Add-VcenterAdapter {
 <#
     .SYNOPSIS
@@ -972,10 +971,11 @@ function Add-VcenterAdapter {
             $payload = New-OperationsVcenterIntegrationPayload -VcenterFqdn $cleanVcFqdn -CollectorGroupId $CollectorGroupId -CredentialId $credentialId -Certificates $certs
         }
         Write-Host "[+] Registering vCenter adapter in VCF Operations..." -ForegroundColor Cyan
-        $create = Invoke-OperationsRest -Method POST -Uri $base -Headers $operationsHeaders -Body $payload
+        $create = Invoke-OperationsRest -Method POST -Uri "$base/?forceManagementOwnership=false" -Headers $operationsHeaders -Body $payload
         if (-not $create.Ok) { throw "Failed to create vCenter integration (HTTP $($create.Status)): $($create.Message)" }
 
         $adapterObj = Get-OperationsAdapter -AdapterKindKey "VMWARE" | Where-Object $matchesVc | Select-Object -First 1
+        
         if (-not $adapterObj) { throw "vCenter integration was created but the adapter instance could not be found." }
     } else {
         Write-Host "[!] Found existing vCenter adapter for '$cleanVcFqdn' (ID: $($adapterObj.id))" -ForegroundColor Yellow
@@ -2115,6 +2115,42 @@ function Wait-LicenseStatus{
     } while ($true)
 }
 
+function Wait-VcenterRegistration {
+    param (
+        [int]$TimeoutMinutes = 20,
+        [int]$checkIntervalSeconds = 30
+    )
+
+    Write-Host "[+] Checking vCenter is registered for licensing (Max wait: 20 minutes)" -ForegroundColor Cyan
+
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $result = $null
+
+    do {
+        try {
+            $result = Get-OperationsVcenters -ErrorAction Stop
+        }
+        catch {
+            Write-Warning "Attempt failed: $_"
+        }
+
+        if ($result) {
+            Write-Host "[✓] Retrieved vCenter for licensing successfully" -ForegroundColor Green
+            break
+        }
+
+        if ($stopwatch.Elapsed.TotalMinutes -ge $timeoutMinutes) {
+            Write-Host "[x] Operation timed out after $timeoutMinutes minute(s)" -ForegroundColor Red
+            break
+        }
+
+        Start-Sleep -Seconds $checkIntervalSeconds
+
+    } while ($true)
+
+    $stopwatch.Stop()
+} 
+
 function Get-OperationsLicense {
 
     $internalHeaders = @{}
@@ -2229,12 +2265,26 @@ function Invoke-OperationsDeployment {
                 Request-OperationsToken -fqdn $jsonInput.operations.master.fqdn -username admin -password $jsonInput.operations.adminPassword
                 Set-EulaSetting # Accept the EULA
                 Set-CeipSetting -status DISABLED # Disable the CEIP setting
+                
                 Add-VcenterAdapter -VcenterFqdn $jsonInput.vcenter.fqdn -VcenterUser $jsonInput.vcenter.username -VcenterPass $jsonInput.vcenter.password
 
                 # Deploy and Register a License Server
                 Request-LicenseServerOTK # Request a one time key (OTK) for the registration of the License Server with VCF Operations
                 Deploy-LicenseServerAppliance # Deploy the License Server appliance
 
+                # Import the License Server Key Pair into VCF Operations and License Server
+                $licenseServerVmName = $jsonInput.licenseServer.fqdn.Split('.')[0]
+                $licenseServerApiKey = Get-VmApiKey -VM $licenseServerVmName
+                Install-OperationsKeyPair -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -VerifyStatus -SkipCertificateCheck
+                Install-LicenseServerKeyPair -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -KeyPairPemFilePath ($jsonInput.licenseServer.fqdn + "-keypair.pem")
+                Wait-LicenseStatus
+
+                # License the system
+                Import-OperationsLicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
+                # Assign Licenses to vCenter
+                Wait-VcenterRegistration
+                Install-OperationsLicense -vcenterFqdn $jsonInput.vcenter.fqdn -licenseType vSphere
+                Install-OperationsLicense -vcenterFqdn $jsonInput.vcenter.fqdn -licenseType vSAN
             }
         } else {
             Write-Host "[x] JSON Specification file ($jsonFile): File Not Found" -ForegroundColor Red
@@ -2284,6 +2334,7 @@ function Invoke-OperationsLicenseInstall {
             # License the system
             Import-OperationsLicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
             # Assign Licenses to vCenter
+            Wait-VcenterRegistration
             Install-OperationsLicense -vcenterFqdn $jsonInput.vcenter.fqdn -licenseType vSphere
             Install-OperationsLicense -vcenterFqdn $jsonInput.vcenter.fqdn -licenseType vSAN
 
