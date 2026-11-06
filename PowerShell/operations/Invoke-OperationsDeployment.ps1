@@ -1,5 +1,46 @@
+    <#
+        .SYNOPSIS
+        Automated way to deployment of VCF Operations and License Server appliance, register a vCenter instance
+        and assign licenses
+
+        .DESCRIPTION
+        The Invoke-OperationsDeployment cmdlet is a single function to deploy and configure VCF Operations and
+        License Server register a vCenter instance and assign both vSphere and vSAN licenses.
+
+        .EXAMPLE
+        Invoke-OperationsDeployment -jsonFile .\operationsDeploySpec.json
+        This example will launch the menu.
+
+        .EXAMPLE
+        Invoke-OperationsDeployment -jsonFile .\operationsDeploySpec.json -GenerateKeys
+        This example performs the operation to generate public and private key pairs.
+
+        .EXAMPLE
+        Invoke-OperationsDeployment -jsonFile .\operationsDeploySpec.json -InstallOperations
+        This example starts the deployment process.
+
+        .EXAMPLE
+        Invoke-OperationsDeployment -jsonFile .\operationsDeploySpec.json -Menu
+        This example will launch the menu.
+
+        .PARAMETER jsonFile
+        The path to the JSON specification file to be used.
+
+        .PARAMETER GenerateKeys
+        Switch to run the generate license keys workflow from the command line.
+
+        .PARAMETER InstallOperations
+        Switch to run the full deployment workflow from the command line.
+
+        .PARAMETER Menu
+        Switch to launch the menu from the command line.
+    #>
+
 Param (
-    [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$jsonPath
+    [Parameter (Mandatory = $true)] [ValidateNotNullOrEmpty()] [String]$jsonPath,
+    [Parameter (Mandatory = $false)] [switch]$GenerateKeys,
+    [Parameter (Mandatory = $false)] [switch]$InstallOperations,
+    [Parameter (Mandatory = $false)] [switch]$Menu
 )
 
 # Store default preference
@@ -2304,21 +2345,8 @@ function Invoke-OperationsDeployment {
                 Request-LicenseServerOTK # Request a one time key (OTK) for the registration of the License Server with VCF Operations
                 Deploy-LicenseServerAppliance # Deploy the License Server appliance
 
-                # Import the License Server Key Pair into VCF Operations and License Server
-                $licenseServerVmName = $jsonInput.licenseServer.fqdn.Split('.')[0]
-                $licenseServerApiKey = Get-VmApiKey -VM $licenseServerVmName
-
-                Wait-LicenseConnectivityStatus
-                Install-OperationsKeyPair -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -VerifyStatus -SkipCertificateCheck
-                Install-LicenseServerKeyPair -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -KeyPairPemFilePath ($jsonInput.licenseServer.fqdn + "-keypair.pem")
-                Wait-LicenseRegistrationStatus
-
-                # License the system
-                Import-OperationsLicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
-                # Assign Licenses to vCenter
-                Wait-VcenterRegistration
-                Install-OperationsLicense -vcenterFqdn $jsonInput.vcenter.fqdn -licenseType vSphere
-                Install-OperationsLicense -vcenterFqdn $jsonInput.vcenter.fqdn -licenseType vSAN
+                # Call the Invoke-OperationsLicenseInstall function to upload the keys and import the license
+                Invoke-OperationsLicenseInstall -jsonFile $jsonPath
             }
         } else {
             Write-Host "[x] JSON Specification file ($jsonFile): File Not Found" -ForegroundColor Red
@@ -2382,7 +2410,19 @@ function Invoke-OperationsLicenseInstall {
     }
 }
 
-Start-OperationsInstall
+# If no switches were passed, default to showing the menu
+if (-not ($GenerateKeys -or $InstallOperations -or $Menu)) {
+    $Menu = [switch]::Present
+}
+
+if ($GenerateKeys) {
+    Invoke-PublicPrivateKey -jsonFile $jsonPath
+    WaitKey
+} elseif ($InstallOperations) {
+    Invoke-OperationsDeployment -jsonFile $jsonPath
+} elseif ($Menu) {
+    Start-OperationsInstall
+}
 
 # Restore default preference
 $ProgressPreference = $previousProgressPreference
