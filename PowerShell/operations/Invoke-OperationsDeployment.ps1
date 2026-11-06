@@ -76,7 +76,7 @@ function Test-VsphereAuthentication {
     )
 
     try {
-        Write-Host "[+] Attempting to connect to vCenter: $server" -ForegroundColor Cyan
+        Write-Host "[+] Attempting to connect to vCenter: $server..." -ForegroundColor Cyan
         Connect-VIServer -Server $server -User $user -pass $pass -ErrorAction SilentlyContinue | Out-Null
         if ($DefaultVIServer.Name -eq $server) {
             Write-Host "[✓] Connected successfully to vCenter: $server" -ForegroundColor Green
@@ -681,7 +681,7 @@ function Request-OperationsToken {
     )
 
     $Global:operationsFqdn = $Fqdn
-    Write-Host "[+] Acquiring VCF Operations API token from '$operationsFqdn'..." -ForegroundColor Cyan
+    Write-Host "`r[+] Acquiring VCF Operations API token from '$operationsFqdn'..." -ForegroundColor Cyan
     $uri = "https://$operationsFqdn/suite-api/api/auth/token/acquire"
     $headers = @{
         "Accept"       = "application/json"
@@ -999,7 +999,7 @@ function Add-VcenterAdapter {
 function Request-LicenseServerOTK {
 
     try {
-        Write-Host "[+] Attempting to obtain One Time Key (OTK) for License Server registration" -ForegroundColor Cyan
+        Write-Host "[+] Attempting to obtain One Time Key (OTK) for License Server registration..." -ForegroundColor Cyan
 
         $internalHeaders = @{}
         foreach ($k in $operationsHeaders.Keys) { $internalHeaders[$k] = $operationsHeaders[$k] }
@@ -1404,7 +1404,7 @@ function New-RsaKeyPair {
 
             $resolvedDir = [System.IO.Path]::GetFullPath($targetBaseDir)
             if (-not (Test-Path -Path $resolvedDir)) {
-                Write-Host "[+] Creating output directory: $resolvedDir" -ForegroundColor Cyan
+                Write-Host "[+] Creating output directory: $resolvedDir..." -ForegroundColor Cyan
                 [void](New-Item -ItemType Directory -Path $resolvedDir -Force)
             }
 
@@ -1427,8 +1427,8 @@ function New-RsaKeyPair {
                 throw "The following target file(s) already exist:`n$($existingFiles -join "`n")`nUse -Overwrite parameter to allow replacing existing files."
             }
 
-            Write-Host "[+] Generating RSA Key Pair ($KeyBits-bit) using OpenSSL" -ForegroundColor Cyan
-            Write-Host "[+] Output Directory: $resolvedDir" -ForegroundColor Cyan
+            Write-Host "[+] Generating RSA Key Pair ($KeyBits-bit) using OpenSSL..." -ForegroundColor Cyan
+            Write-Host "[+] Output Directory: $resolvedDir..." -ForegroundColor Cyan
 
             # Step 1: Generate Private Key
             # openssl genpkey -algorithm RSA -out private_key.pem -pkeyopt rsa_keygen_bits:4096
@@ -2089,10 +2089,13 @@ function Get-OperationsLicenseServers {
     }
 }
 
-function Wait-LicenseStatus{
-    $maxAttempts = 30
-    $attempt = 0
-    $intervalSeconds = 5
+function Wait-LicenseRegistrationStatus {
+    param (
+        [int]$maxAttempts = 30,
+        [int]$attempt = 0,
+        [int]$intervalSeconds = 5
+    )
+
 
     do {
         $attempt++
@@ -2115,13 +2118,42 @@ function Wait-LicenseStatus{
     } while ($true)
 }
 
+function Wait-LicenseConnectivityStatus {
+    param (
+        [int]$maxAttempts = 30,
+        [int]$attempt = 0,
+        [int]$intervalSeconds = 5
+    )
+
+
+    do {
+        $attempt++
+        $status = (Get-OperationsLicenseServers).connectivityStatus
+        
+        # Pad with trailing spaces to clear any remnants from longer previous text
+        Write-Host "`r[!] Current connectivity status: $status" -NoNewline -ForegroundColor Yellow
+        if ($status -eq 'CONNECTED') {
+            Write-Host "`n[✓] Success: Connectivity status reached CONNECTED." -ForegroundColor Green
+            break
+        }
+
+        if ($attempt -ge $maxAttempts) {
+            Write-Host "" # Move cursor down to prevent Write-Warning from colliding
+            Write-Warning "Timeout reached after $maxAttempts attempts without reaching CONNECTED."
+            break
+        }
+
+        Start-Sleep -Seconds $intervalSeconds
+    } while ($true)
+}
+
 function Wait-VcenterRegistration {
     param (
         [int]$TimeoutMinutes = 20,
         [int]$checkIntervalSeconds = 30
     )
 
-    Write-Host "[+] Checking vCenter is registered for licensing (Max wait: 20 minutes)" -ForegroundColor Cyan
+    Write-Host "[+] Checking vCenter is registered for licensing (Max wait: 20 minutes)..." -ForegroundColor Cyan
 
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $result = $null
@@ -2275,9 +2307,11 @@ function Invoke-OperationsDeployment {
                 # Import the License Server Key Pair into VCF Operations and License Server
                 $licenseServerVmName = $jsonInput.licenseServer.fqdn.Split('.')[0]
                 $licenseServerApiKey = Get-VmApiKey -VM $licenseServerVmName
+
+                Wait-LicenseConnectivityStatus
                 Install-OperationsKeyPair -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -VerifyStatus -SkipCertificateCheck
                 Install-LicenseServerKeyPair -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -KeyPairPemFilePath ($jsonInput.licenseServer.fqdn + "-keypair.pem")
-                Wait-LicenseStatus
+                Wait-LicenseRegistrationStatus
 
                 # License the system
                 Import-OperationsLicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
@@ -2327,9 +2361,11 @@ function Invoke-OperationsLicenseInstall {
             # Import the License Server Key Pair into VCF Operations and License Server
             $licenseServerVmName = $jsonInput.licenseServer.fqdn.Split('.')[0]
             $licenseServerApiKey = Get-VmApiKey -VM $licenseServerVmName
+
+            Wait-LicenseConnectivityStatus
             Install-OperationsKeyPair -KeypairPath ($jsonInput.operations.master.fqdn + "-keypair.pem") -VerifyStatus -SkipCertificateCheck
             Install-LicenseServerKeyPair -LicenseServerFqdn $jsonInput.licenseServer.fqdn -ApiKey $licenseServerApiKey -KeyPairPemFilePath ($jsonInput.licenseServer.fqdn + "-keypair.pem")
-            Wait-LicenseStatus
+            Wait-LicenseRegistrationStatus
 
             # License the system
             Import-OperationsLicenseFile -licenseFile $jsonInput.licenseServer.licenseFile
