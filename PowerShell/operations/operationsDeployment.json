@@ -2,16 +2,16 @@
     "vcenter": {
         "fqdn": "sfo-w03-vc01.sfo.rainpole.io",
         "username": "administrator@sfo-w03.local",
-        "password": "VMw@re1!VMw@re1!",
+        "password": "***************",
         "targetEsx": "sfo01-w03-r01-esx01.sfo.rainpole.io",
         "datastore": "sfo-w03-sfo-w03-cl01-vsan01",
         "portgroup": "sfo-m01-cl01-vds01-pg-vm-mgmt"
     },
     "operations": {
-        "adminPassword": "VMw@re1!VMw@re1!",
-        "rootPassword": "VMw@re1!VMw@re1!",
+        "adminPassword": "***************",
+        "rootPassword": "***************",
         "size": "small",
-        "ovaPath": "F:/PlatformTools/binaries/Operations-Appliance-9.1.1.0.25628919.ova",
+        "ovaPath": "F:/Scripts/Operations-Appliance-9.1.1.0100.xxxxxxxx.ova",
         "gateway": "10.11.10.1",
         "netmask": "255.255.255.0",
         "master": {
@@ -20,13 +20,13 @@
         }
     },
     "licenseServer": {
-        "adminPassword": "VMw@re1!VMw@re1!",
+        "adminPassword": "***************",
         "fqdn": "sfo-lc01.sfo.rainpole.io",
         "ipAddress": "10.11.10.206",
         "gateway": "10.11.10.1",
         "netmask": "255.255.255.0",
-        "ovaPath": "F:/PlatformTools/binaries/Vcf-License-Server-9.1.1.0.25679819.ova",
-        "licenseFile": "F:/Scripts/license-license_2026-10-27_12-32-19-352Z.lic"
+        "ovaPath": "F:/Scripts/Vcf-License-Server-9.1.1.0.xxxxxxxx.ova",
+        "licenseFile": "F:/Scripts/my_license_file.lic"
     },
     "dnsServers": "10.11.10.4, 10.11.10.5",
     "ntpServers": [
